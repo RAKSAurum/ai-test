@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from marshmallow import Schema, fields, post_load
 
-from openfabric_pysdk.fields import Resource
+#from openfabric_pysdk.fields import Resource
 from openfabric_pysdk.utility import SchemaUtil
 
 

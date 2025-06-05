@@ -1,14 +1,15 @@
 [tool.poetry]
-name = "ai-test"
+name = "core"
 version = "1.0"
-description = "'An application for demonstrating your skills in AI'"
+description = "An application for demonstrating your skills in AI"
 authors = ["Rockstar"]
 
 [tool.poetry.dependencies]
-python = "^3.8"
-openfabric-pysdk = "^0.3.0"
+python = ">=3.8,<4.0"
+openfabric-pysdk = "^0.2.9"
+marshmallow = "<4.0"
 
-[tool.poetry.dev-dependencies]
+[tool.poetry.group.dev.dependencies]
 pytest = "^5.2"
 
 [[tool.poetry.source]]
