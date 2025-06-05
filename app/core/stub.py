@@ -37,7 +37,6 @@ class Stub:
         handler = connection.execute(data, uid)
         result = connection.get_response(handler)
         
-        # Handle resource URLs if present
         if isinstance(result, dict) and 'result' in result:
             result_data = result['result']
             if isinstance(result_data, str) and result_data.startswith('resource://'):
