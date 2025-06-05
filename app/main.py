@@ -6,8 +6,10 @@ import base64
 from datetime import datetime
 from typing import Dict, Optional
 import uuid
+
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
+import ollama
 
 from ontology_dc8f06af066e4a7880a5938933236037.config import ConfigClass
 from ontology_dc8f06af066e4a7880a5938933236037.input import InputClass
@@ -109,23 +111,26 @@ class MemoryManager:
 # Global memory manager
 memory_manager = MemoryManager()
 
+# DeepSeek LLM Processor
 class DeepSeekLLMProcessor:
     """Handles DeepSeek local LLM processing for prompt enhancement"""
     
-    def __init__(self):
+    def __init__(self, local_model_path=None):
         self.model = None
         self.tokenizer = None
         self.model_loaded = False
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         
-        # Model configuration
-        self.model_name = "deepseek-ai/deepseek-coder-1.3b-instruct"
-        # Alternative larger model: "deepseek-ai/deepseek-coder-6.7b-instruct"
-        
-        self.load_model()
+        # Use local model if provided, otherwise use Ollama
+        if local_model_path:
+            self.model_name = local_model_path
+            self.load_model()
+        else:
+            self.model_name = "deepseek-r1:1.5b"
+            self.model_loaded = False  # Will use Ollama fallback
     
     def load_model(self):
-        """Load DeepSeek model and tokenizer"""
+        """Load DeepSeek model and tokenizer with optimizations"""
         try:
             logging.info(f"Loading DeepSeek model: {self.model_name}")
             logging.info(f"Using device: {self.device}")
@@ -136,13 +141,15 @@ class DeepSeekLLMProcessor:
                 trust_remote_code=True
             )
             
-            # Load model with optimizations
+            # Load model with optimizations for better performance
             self.model = AutoModelForCausalLM.from_pretrained(
                 self.model_name,
                 torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
                 device_map="auto" if self.device == "cuda" else None,
                 trust_remote_code=True,
-                low_cpu_mem_usage=True
+                low_cpu_mem_usage=True,
+                load_in_4bit=True,  # 4-bit quantization for memory efficiency
+                use_cache=True      # Enable KV cache for faster inference
             )
             
             if self.device == "cpu":
@@ -157,12 +164,12 @@ class DeepSeekLLMProcessor:
             
         except Exception as e:
             logging.error(f"Failed to load DeepSeek model: {e}")
-            logging.info("Falling back to rule-based enhancement")
+            logging.info("Falling back to Ollama enhancement")
             self.model_loaded = False
     
     def enhance_prompt(self, original_prompt: str) -> str:
         """
-        Enhance the user prompt with DeepSeek LLM
+        Enhance the user prompt with DeepSeek LLM or Ollama fallback
         """
         try:
             # Check memory for similar prompts first
@@ -174,7 +181,7 @@ class DeepSeekLLMProcessor:
             if self.model_loaded:
                 enhanced = self._deepseek_enhancement(original_prompt, context)
             else:
-                enhanced = self._rule_based_enhancement(original_prompt, context)
+                enhanced = self._ollama_enhancement(original_prompt, context)
             
             logging.info(f"Enhanced prompt: '{original_prompt}' -> '{enhanced}'")
             return enhanced
@@ -184,56 +191,41 @@ class DeepSeekLLMProcessor:
             return self._rule_based_enhancement(original_prompt, "")
     
     def _deepseek_enhancement(self, prompt: str, context: str) -> str:
-        """Use DeepSeek model to enhance the prompt"""
+        """Use DeepSeek model to enhance the prompt with R1 optimizations"""
         try:
-            # Create system message for prompt enhancement
-            system_prompt = """You are a creative AI assistant specialized in enhancing text-to-image prompts. Your task is to take simple prompts and expand them into detailed, artistic descriptions suitable for high-quality image generation.
+            # DeepSeek R1 specific prompt format with thinking trigger
+            enhancement_prompt = f"""<think>
+I need to enhance this image prompt to make it more detailed and artistic while keeping the core concept.
 
-Focus on:
+Original prompt: {prompt}
+{f"Context: {context}" if context else ""}
+
+I should add:
 - Visual details (colors, textures, lighting)
-- Artistic style and quality descriptors
+- Artistic style descriptors
 - Atmospheric elements
-- Technical photography/art terms
-- Keep the core concept but make it vivid and detailed
+- Technical quality terms
+</think>
 
-Example:
-Input: "dragon on cliff"
-Output: "Majestic dragon with iridescent emerald scales perched on a rocky cliff overlooking a vast valley, golden hour lighting, dramatic clouds, highly detailed digital art, 8k resolution, fantasy masterpiece"
+Enhance this image prompt for high-quality generation: {prompt}
 
-Respond with only the enhanced prompt, no explanations."""
-            
-            # Format the conversation for DeepSeek
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Enhance this image prompt: {prompt}"}
-            ]
-            
-            # Add context if available
-            if context:
-                messages.append({"role": "user", "content": f"Context: {context}"})
-            
-            # Apply chat template
-            formatted_input = self.tokenizer.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=True
-            )
+Enhanced prompt:"""
             
             # Tokenize input
             inputs = self.tokenizer(
-                formatted_input,
+                enhancement_prompt,
                 return_tensors="pt",
                 padding=True,
                 truncation=True,
                 max_length=512
             ).to(self.device)
             
-            # Generate response
+            # Generate response with R1 optimized parameters
             with torch.no_grad():
                 outputs = self.model.generate(
                     **inputs,
                     max_new_tokens=150,
-                    temperature=0.7,
+                    temperature=0.6,  # R1 recommended temperature
                     do_sample=True,
                     top_p=0.9,
                     top_k=50,
@@ -245,16 +237,17 @@ Respond with only the enhanced prompt, no explanations."""
             # Decode response
             full_response = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
             
-            # Extract only the assistant's response
-            if "assistant" in full_response:
-                enhanced_prompt = full_response.split("assistant")[-1].strip()
+            # Extract enhanced prompt after "Enhanced prompt:"
+            if "Enhanced prompt:" in full_response:
+                enhanced_prompt = full_response.split("Enhanced prompt:")[-1].strip()
             else:
                 # Fallback extraction
-                input_length = len(formatted_input)
+                input_length = len(enhancement_prompt)
                 enhanced_prompt = full_response[input_length:].strip()
             
             # Clean up the response
             enhanced_prompt = enhanced_prompt.replace('\n', ' ').strip()
+            enhanced_prompt = enhanced_prompt.split('.')[0] if '.' in enhanced_prompt else enhanced_prompt
             
             # Ensure we have a reasonable response
             if len(enhanced_prompt) < 10 or len(enhanced_prompt) > 500:
@@ -267,8 +260,39 @@ Respond with only the enhanced prompt, no explanations."""
             logging.error(f"DeepSeek enhancement failed: {e}")
             return self._rule_based_enhancement(prompt, context)
     
+    def _ollama_enhancement(self, prompt: str, context: str) -> str:
+        """Fallback to Ollama local model for prompt enhancement"""
+        try:
+            import ollama
+            
+            enhancement_prompt = f"<think>\nI need to enhance this image prompt: {prompt}\n{context if context else ''}\n</think>\n\nEnhance this image prompt for high-quality generation: {prompt}"
+            
+            response = ollama.chat(
+                model=self.model_name,
+                messages=[
+                    {"role": "user", "content": enhancement_prompt}
+                ],
+                options={
+                    'temperature': 0.6,
+                    'top_p': 0.9,
+                    'max_tokens': 150
+                }
+            )
+            
+            enhanced = response['message']['content'].strip()
+            
+            # Clean up response
+            if len(enhanced) < 10 or len(enhanced) > 500:
+                return self._rule_based_enhancement(prompt, context)
+                
+            return enhanced
+            
+        except Exception as e:
+            logging.error(f"Ollama enhancement failed: {e}")
+            return self._rule_based_enhancement(prompt, context)
+    
     def _rule_based_enhancement(self, prompt: str, context: str) -> str:
-        """Fallback rule-based prompt enhancement"""
+        """Improved fallback rule-based prompt enhancement"""
         enhancements = {
             'dragon': 'majestic dragon with iridescent scales, breathing ethereal fire',
             'city': 'futuristic cyberpunk cityscape with neon lights and flying vehicles',
@@ -279,7 +303,10 @@ Respond with only the enhanced prompt, no explanations."""
             'castle': 'medieval castle with stone towers and gothic architecture',
             'ocean': 'vast ocean with crystal clear water and dramatic waves',
             'mountain': 'snow-capped mountain peaks with misty valleys',
-            'space': 'cosmic space scene with nebulae and distant stars'
+            'space': 'cosmic space scene with nebulae and distant stars',
+            'cat': 'elegant cat with piercing eyes and luxurious fur',
+            'flower': 'vibrant flower with delicate petals and morning dew',
+            'car': 'sleek sports car with polished chrome and dynamic lines'
         }
         
         enhanced = prompt.lower()
@@ -287,14 +314,15 @@ Respond with only the enhanced prompt, no explanations."""
             if key in enhanced:
                 enhanced = enhanced.replace(key, enhancement)
         
-        # Add artistic qualities
+        # Add artistic qualities with better logic
         quality_descriptors = [
             'highly detailed', '8k resolution', 'professional lighting',
             'digital art masterpiece', 'cinematic composition', 'vibrant colors'
         ]
         
+        # Only add descriptors that aren't already present
         for descriptor in quality_descriptors:
-            if descriptor.split()[0] not in enhanced:
+            if not any(word in enhanced for word in descriptor.split()):
                 enhanced += f', {descriptor}'
         
         return enhanced.title()
@@ -320,6 +348,11 @@ def config(configuration: Dict[str, ConfigClass], state: State) -> None:
 ############################################################
 # Execution callback function
 ############################################################
+class AppModel:
+    def __init__(self):
+        self.request = None
+        self.response = None
+
 def execute(model: AppModel) -> None:
     """
     Main execution entry point for handling a model pass.
@@ -327,6 +360,10 @@ def execute(model: AppModel) -> None:
     Args:
         model (AppModel): The model object containing request and response structures.
     """
+    progress_steps = ["🧠 Enhancing prompt", "🎨 Generating image", "🏗️ Creating 3D model", "💾 Storing results"]
+    
+    for i, step in enumerate(progress_steps):
+        logging.info(f"[{i+1}/{len(progress_steps)}] {step}...")
 
     # Retrieve input
     request: InputClass = model.request
