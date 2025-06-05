@@ -6,6 +6,7 @@ import base64
 from datetime import datetime
 from typing import Dict, Optional
 import uuid
+from PIL import Image
 
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
@@ -25,7 +26,6 @@ TEXT_TO_IMAGE_APP_ID = 'f0997a01-d6d3-a5fe-53d8-561300318557'
 IMAGE_TO_3D_APP_ID = '69543f29-4d41-4afc-7f29-3d51591f11eb'
 
 def initialize_default_config():
-    """Initialize default configuration with Openfabric app IDs"""
     default_config = ConfigClass()
     default_config.app_ids = [
         f"{TEXT_TO_IMAGE_APP_ID}.node2.openfabric.network",
@@ -44,11 +44,11 @@ class MemoryManager:
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         # Don't create connection here - create per thread
         self.init_database()
-    
+
     def get_connection(self):
         """Get thread-safe database connection"""
         return sqlite3.connect(self.db_path, check_same_thread=False)
-    
+
     def init_database(self):
         """Initialize database schema"""
         conn = self.get_connection()
@@ -66,7 +66,7 @@ class MemoryManager:
             conn.commit()
         finally:
             conn.close()
-    
+
     def store_generation(self, original_prompt, enhanced_prompt, image_data, model_data):
         """Store generation with thread-safe connection"""
         generation_id = str(uuid.uuid4())
@@ -79,6 +79,26 @@ class MemoryManager:
             ''', (generation_id, original_prompt, enhanced_prompt, image_data, model_data))
             conn.commit()
             return generation_id
+        finally:
+            conn.close()
+
+    def recall_similar(self, prompt, limit=5):
+        """Recall similar prompts from memory"""
+        conn = self.get_connection()
+        try:
+            cursor = conn.execute('''
+                SELECT original_prompt, enhanced_prompt 
+                FROM generations 
+                WHERE original_prompt LIKE ? OR enhanced_prompt LIKE ?
+                ORDER BY timestamp DESC 
+                LIMIT ?
+            ''', (f'%{prompt}%', f'%{prompt}%', limit))
+            
+            results = cursor.fetchall()
+            return [{'original': row[0], 'enhanced': row[1]} for row in results]
+        except Exception as e:
+            logging.error(f"Memory recall failed: {e}")
+            return []
         finally:
             conn.close()
 
@@ -102,7 +122,7 @@ class DeepSeekLLMProcessor:
         else:
             self.model_name = "deepseek-r1:1.5b"
             self.model_loaded = False  # Will use Ollama fallback
-    
+
     def load_model(self):
         """Load DeepSeek model and tokenizer with optimizations"""
         try:
@@ -123,7 +143,7 @@ class DeepSeekLLMProcessor:
                 trust_remote_code=True,
                 low_cpu_mem_usage=True,
                 load_in_4bit=True,  # 4-bit quantization for memory efficiency
-                use_cache=True      # Enable KV cache for faster inference
+                use_cache=True  # Enable KV cache for faster inference
             )
             
             if self.device == "cpu":
@@ -140,7 +160,7 @@ class DeepSeekLLMProcessor:
             logging.error(f"Failed to load DeepSeek model: {e}")
             logging.info("Falling back to Ollama enhancement")
             self.model_loaded = False
-    
+
     def enhance_prompt(self, original_prompt: str) -> str:
         """
         Enhance the user prompt with DeepSeek LLM or Ollama fallback
@@ -150,7 +170,7 @@ class DeepSeekLLMProcessor:
             similar = memory_manager.recall_similar(original_prompt, 3)
             context = ""
             if similar:
-                context = f"Previous similar generations: {[s[2] for s in similar[:2]]}"
+                context = f"Previous similar generations: {[s['enhanced'] for s in similar[:2]]}"
             
             if self.model_loaded:
                 enhanced = self._deepseek_enhancement(original_prompt, context)
@@ -163,7 +183,7 @@ class DeepSeekLLMProcessor:
         except Exception as e:
             logging.error(f"LLM processing failed: {e}")
             return self._rule_based_enhancement(original_prompt, "")
-    
+
     def _deepseek_enhancement(self, prompt: str, context: str) -> str:
         """Use DeepSeek model to enhance the prompt with R1 optimizations"""
         try:
@@ -184,7 +204,7 @@ I should add:
 Enhance this image prompt for high-quality generation: {prompt}
 
 Enhanced prompt:"""
-            
+
             # Tokenize input
             inputs = self.tokenizer(
                 enhancement_prompt,
@@ -193,7 +213,7 @@ Enhanced prompt:"""
                 truncation=True,
                 max_length=512
             ).to(self.device)
-            
+
             # Generate response with R1 optimized parameters
             with torch.no_grad():
                 outputs = self.model.generate(
@@ -207,7 +227,7 @@ Enhanced prompt:"""
                     pad_token_id=self.tokenizer.eos_token_id,
                     eos_token_id=self.tokenizer.eos_token_id
                 )
-            
+
             # Decode response
             full_response = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
             
@@ -218,22 +238,22 @@ Enhanced prompt:"""
                 # Fallback extraction
                 input_length = len(enhancement_prompt)
                 enhanced_prompt = full_response[input_length:].strip()
-            
+
             # Clean up the response
             enhanced_prompt = enhanced_prompt.replace('\n', ' ').strip()
             enhanced_prompt = enhanced_prompt.split('.')[0] if '.' in enhanced_prompt else enhanced_prompt
-            
+
             # Ensure we have a reasonable response
             if len(enhanced_prompt) < 10 or len(enhanced_prompt) > 500:
                 logging.warning("DeepSeek response seems invalid, using fallback")
                 return self._rule_based_enhancement(prompt, context)
-            
+
             return enhanced_prompt
-            
+
         except Exception as e:
             logging.error(f"DeepSeek enhancement failed: {e}")
             return self._rule_based_enhancement(prompt, context)
-    
+
     def _ollama_enhancement(self, prompt: str, context: str) -> str:
         """Fallback to Ollama local model for prompt enhancement"""
         try:
@@ -258,13 +278,13 @@ Enhanced prompt:"""
             # Clean up response
             if len(enhanced) < 10 or len(enhanced) > 500:
                 return self._rule_based_enhancement(prompt, context)
-                
+            
             return enhanced
             
         except Exception as e:
             logging.error(f"Ollama enhancement failed: {e}")
             return self._rule_based_enhancement(prompt, context)
-    
+
     def _rule_based_enhancement(self, prompt: str, context: str) -> str:
         """Improved fallback rule-based prompt enhancement"""
         enhancements = {
@@ -310,7 +330,7 @@ llm_processor = DeepSeekLLMProcessor()
 def config(configuration: Dict[str, ConfigClass], state: State) -> None:
     """
     Stores user-specific configuration data.
-
+    
     Args:
         configuration (Dict[str, ConfigClass]): A mapping of user IDs to configuration objects.
         state (State): The current state of the application (not used in this implementation).
@@ -322,57 +342,119 @@ def config(configuration: Dict[str, ConfigClass], state: State) -> None:
 ############################################################
 # Execution callback function
 ############################################################
-class AppModel:
-    def __init__(self):
-        self.request = None
-        self.response = None
-
 def execute(request: InputClass, ray: Ray, state: State) -> OutputClass:
     try:
         original_prompt = request.prompt
         logging.info(f"Processing prompt: '{original_prompt}'")
+        ray.progress(step=10)
         
-        # Step 1: Test LLM enhancement first (without Openfabric apps)
-        try:
-            enhanced_prompt = llm_processor.enhance_prompt(original_prompt)
-            logging.info(f"LLM enhancement successful: {enhanced_prompt}")
-        except Exception as e:
-            logging.error(f"LLM processing failed: {e}")
-            enhanced_prompt = f"Enhanced: {original_prompt}"  # Fallback
+        # Step 1: Enhance prompt with DeepSeek LLM
+        enhanced_prompt = llm_processor.enhance_prompt(original_prompt)
+        logging.info(f"Enhanced prompt: {enhanced_prompt}")
+        ray.progress(step=25)
         
-        # Step 2: Store generation (test memory system)
-        try:
-            generation_id = memory_manager.store_generation(
-                original_prompt,
-                enhanced_prompt,
-                "placeholder_image_data",
-                "placeholder_3d_data"
-            )
-            logging.info(f"Memory storage successful: {generation_id}")
-        except Exception as e:
-            logging.error(f"Memory storage failed: {e}")
-            generation_id = "test-id"
+        # Step 2: Initialize Openfabric connections
+        user_config = configurations.get('super-user')
+        if not user_config or not user_config.app_ids:
+            raise Exception("No app configuration found")
         
-        # Step 3: Try Openfabric apps (with fallback)
-        openfabric_status = "Not attempted"
-        try:
-            user_config = configurations.get('super-user')
-            if user_config and user_config.app_ids:
-                stub = Stub(user_config.app_ids)
-                openfabric_status = "Connections established"
-        except Exception as e:
-            logging.error(f"Openfabric connection failed: {e}")
-            openfabric_status = f"Failed: {str(e)}"
+        stub = Stub(user_config.app_ids)
+        ray.progress(step=40)
+        
+        # Step 3: Generate image using Text-to-Image app
+        logging.info("Calling text-to-image Openfabric app...")
+        image_input = {
+            "prompt": enhanced_prompt,
+            "width": 512,
+            "height": 512,
+            "steps": 20,
+            "guidance_scale": 7.5
+        }
+        
+        image_result = stub.call(
+            f"{TEXT_TO_IMAGE_APP_ID}.node2.openfabric.network",
+            image_input,
+            'super-user'
+        )
+        ray.progress(step=65)
+        
+        if not image_result or 'result' not in image_result:
+            raise Exception("Image generation failed - no result returned")
+        
+        # Save generated image
+        image_data = image_result['result']
+        image_filename = f"image_{uuid.uuid4().hex[:8]}.png"
+        image_path = f"outputs/{image_filename}"
+        os.makedirs("outputs", exist_ok=True)
+        
+        # Handle different image data formats
+        if isinstance(image_data, str) and image_data.startswith('data:image'):
+            # Base64 encoded image
+            image_bytes = base64.b64decode(image_data.split(',')[1])
+            with open(image_path, 'wb') as f:
+                f.write(image_bytes)
+        elif isinstance(image_data, bytes):
+            # Raw image bytes
+            with open(image_path, 'wb') as f:
+                f.write(image_data)
+        else:
+            # Assume it's a URL or resource reference
+            logging.info(f"Image result: {image_data}")
+        
+        logging.info(f"Image saved to: {image_path}")
+        ray.progress(step=80)
+        
+        # Step 4: Generate 3D model using Image-to-3D app
+        logging.info("Calling image-to-3D Openfabric app...")
+        model_input = {
+            "image": image_data,
+            "resolution": 256,
+            "steps": 50
+        }
+        
+        model_result = stub.call(
+            f"{IMAGE_TO_3D_APP_ID}.node2.openfabric.network",
+            model_input,
+            'super-user'
+        )
+        
+        if not model_result or 'result' not in model_result:
+            raise Exception("3D model generation failed - no result returned")
+        
+        # Save generated 3D model
+        model_data = model_result['result']
+        model_filename = f"model_{uuid.uuid4().hex[:8]}.obj"
+        model_path = f"outputs/{model_filename}"
+        
+        if isinstance(model_data, bytes):
+            with open(model_path, 'wb') as f:
+                f.write(model_data)
+        else:
+            logging.info(f"3D model result: {model_data}")
+        
+        logging.info(f"3D model saved to: {model_path}")
+        ray.progress(step=95)
+        
+        # Step 5: Store complete generation in memory
+        generation_id = memory_manager.store_generation(
+            original_prompt,
+            enhanced_prompt,
+            image_data,
+            model_data
+        )
+        
+        ray.progress(step=100)
         
         # Create comprehensive response
         response = OutputClass()
         response.message = (
-            f"🤖 AI Pipeline Test Results:\n"
-            f"✅ Prompt: {original_prompt}\n"
-            f"🧠 LLM Enhanced: {enhanced_prompt}\n"
-            f"💾 Memory ID: {generation_id}\n"
-            f"🔗 Openfabric: {openfabric_status}\n"
-            f"📊 Core functionality working!"
+            f"🎨 3D Model Generation Complete!\n"
+            f"📝 Original: {original_prompt}\n"
+            f"🧠 Enhanced: {enhanced_prompt[:100]}...\n"
+            f"🖼️ Image: {image_filename}\n"
+            f"🗿 3D Model: {model_filename}\n"
+            f"🆔 Generation ID: {generation_id}\n"
+            f"✅ Ready for download and 3D printing!"
         )
         
         return response
@@ -380,5 +462,5 @@ def execute(request: InputClass, ray: Ray, state: State) -> OutputClass:
     except Exception as e:
         logging.error(f"Pipeline failed: {e}")
         response = OutputClass()
-        response.message = f"❌ Error: {str(e)}"
+        response.message = f"❌ Generation Error: {str(e)}"
         return response

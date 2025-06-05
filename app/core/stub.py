@@ -34,22 +34,34 @@ class Stub:
         if not connection:
             raise Exception(f"Connection not found for app ID: {app_id}")
         
-        handler = connection.execute(data, uid)
-        result = connection.get_response(handler)
-        
-        if isinstance(result, dict) and 'result' in result:
-            result_data = result['result']
-            if isinstance(result_data, str) and result_data.startswith('resource://'):
-                resource_id = result_data.replace('resource://', '')
-                resource_url = f"https://{app_id}/resource?reid={resource_id}"
-                try:
-                    response = requests.get(resource_url, timeout=15)
-                    if response.status_code == 200:
-                        result['result'] = response.content
-                except Exception as e:
-                    logging.warning(f"Failed to resolve resource {resource_id}: {e}")
-        
-        return result
+        try:
+            logging.info(f"Executing call to {app_id} with data: {data}")
+            handler = connection.execute(data, uid)
+            result = connection.get_response(handler)
+            
+            logging.info(f"Received result from {app_id}: {type(result)}")
+            
+            # Enhanced resource handling for Openfabric apps
+            if isinstance(result, dict) and 'result' in result:
+                result_data = result['result']
+                if isinstance(result_data, str) and result_data.startswith('resource://'):
+                    resource_id = result_data.replace('resource://', '')
+                    resource_url = f"https://{app_id}/resource?reid={resource_id}"
+                    try:
+                        response = requests.get(resource_url, timeout=30)
+                        if response.status_code == 200:
+                            result['result'] = response.content
+                            logging.info(f"Successfully downloaded resource: {resource_id}")
+                        else:
+                            logging.error(f"Failed to download resource {resource_id}: {response.status_code}")
+                    except Exception as e:
+                        logging.error(f"Resource download failed {resource_id}: {e}")
+            
+            return result
+            
+        except Exception as e:
+            logging.error(f"Execution failed for {app_id}: {e}")
+            raise e
 
     def manifest(self, app_id: str) -> dict:
         return self._manifest.get(app_id, {})
