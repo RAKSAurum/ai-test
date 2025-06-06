@@ -1,0 +1,5 @@
+openfabric-pysdk
+torch
+transformers
+ollama
+pillow
