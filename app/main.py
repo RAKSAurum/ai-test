@@ -20,20 +20,20 @@ from core.stub import Stub
 # Configurations for the app
 configurations: Dict[str, ConfigClass] = dict()
 
-# App IDs from the challenge
-TEXT_TO_IMAGE_APP_ID = 'f0997a01-d6d3-a5fe-53d8-561300318557'
-IMAGE_TO_3D_APP_ID = '69543f29-4d41-4afc-7f29-3d51591f11eb'
+# NEW: Direct URLs for Openfabric apps (node3 structure)
+TEXT_TO_IMAGE_URL = 'http://PLACEHOLDER_HASH.node3.openfabric.network'  # Placeholder for text-to-image
+IMAGE_TO_3D_URL = 'http://5891a64fe34041d98b0262bb1175ff07.node3.openfabric.network'  # Working image-to-3D URL
 
 def initialize_default_config():
-    """Initialize default configuration with app IDs only"""
+    """Initialize default configuration with direct URLs"""
     default_config = ConfigClass()
-    # Use just app IDs - let stub handle URL discovery
+    # Use direct URLs for both apps
     default_config.app_ids = [
-        TEXT_TO_IMAGE_APP_ID,
-        IMAGE_TO_3D_APP_ID
+        TEXT_TO_IMAGE_URL,
+        IMAGE_TO_3D_URL
     ]
     configurations['super-user'] = default_config
-    logging.info("🔧 Default configuration initialized with app IDs")
+    logging.info("🔧 Default configuration initialized with direct URLs")
 
 # Initialize at module level
 initialize_default_config()
@@ -310,7 +310,7 @@ Enhanced prompt:"""
 llm_processor = DeepSeekLLMProcessor()
 
 ############################################################
-# Config callback function (following Openfabric documentation[4])
+# Config callback function
 ############################################################
 def config(configuration: Dict[str, ConfigClass], state: State) -> None:
     """Stores user-specific configuration data"""
@@ -319,7 +319,7 @@ def config(configuration: Dict[str, ConfigClass], state: State) -> None:
         configurations[uid] = conf
 
 ############################################################
-# Execution callback function (following Openfabric documentation[4])
+# Execution callback function - UPDATED FOR DIRECT URLS
 ############################################################
 def execute(request: InputClass, ray: Ray, state: State) -> OutputClass:
     try:
@@ -332,12 +332,12 @@ def execute(request: InputClass, ray: Ray, state: State) -> OutputClass:
         logging.info(f"🧠 Enhanced prompt: {enhanced_prompt}")
         ray.progress(step=25)
         
-        # Step 2: Initialize Openfabric connections
+        # Step 2: Initialize Openfabric connections with direct URLs
         user_config = configurations.get('super-user')
         if not user_config or not user_config.app_ids:
             raise Exception("No app configuration found")
         
-        logging.info(f"🔌 Attempting to connect to apps: {user_config.app_ids}")
+        logging.info(f"🔌 Attempting to connect to direct URLs: {user_config.app_ids}")
         stub = Stub(user_config.app_ids)
         
         # Check connected apps
@@ -350,8 +350,8 @@ def execute(request: InputClass, ray: Ray, state: State) -> OutputClass:
         ray.progress(step=40)
         
         # Step 3: Generate image using Text-to-Image app
-        if not stub.is_connected(TEXT_TO_IMAGE_APP_ID):
-            logging.warning(f"⚠️ Text-to-image app {TEXT_TO_IMAGE_APP_ID} not connected")
+        if not stub.is_connected(TEXT_TO_IMAGE_URL):
+            logging.warning(f"⚠️ Text-to-image URL not connected: {TEXT_TO_IMAGE_URL}")
             return execute_mock_mode(original_prompt, enhanced_prompt, ray)
         
         logging.info("🎨 Calling text-to-image Openfabric app...")
@@ -364,7 +364,7 @@ def execute(request: InputClass, ray: Ray, state: State) -> OutputClass:
             "return_type": "base64"
         }
         
-        image_result = stub.call(TEXT_TO_IMAGE_APP_ID, image_input, 'super-user')
+        image_result = stub.call(TEXT_TO_IMAGE_URL, image_input, 'super-user')
         ray.progress(step=65)
         
         if not image_result or 'result' not in image_result:
@@ -400,8 +400,8 @@ def execute(request: InputClass, ray: Ray, state: State) -> OutputClass:
         ray.progress(step=80)
         
         # Step 4: Generate 3D model using Image-to-3D app
-        if not stub.is_connected(IMAGE_TO_3D_APP_ID):
-            logging.warning(f"⚠️ Image-to-3D app {IMAGE_TO_3D_APP_ID} not connected")
+        if not stub.is_connected(IMAGE_TO_3D_URL):
+            logging.warning(f"⚠️ Image-to-3D URL not connected: {IMAGE_TO_3D_URL}")
             # Continue with just image generation
             generation_id = memory_manager.store_generation(
                 original_prompt, enhanced_prompt, image_data, "3D_generation_skipped"
@@ -413,7 +413,7 @@ def execute(request: InputClass, ray: Ray, state: State) -> OutputClass:
                 f"📝 Original: {original_prompt}\n"
                 f"🧠 Enhanced: {enhanced_prompt[:100]}...\n"
                 f"🖼️ Image: {image_filename}\n"
-                f"⚠️ 3D Model: Skipped (app offline)\n"
+                f"⚠️ 3D Model: Skipped (URL not connected)\n"
                 f"🆔 Generation ID: {generation_id}\n"
                 f"✅ Partial generation successful!"
             )
@@ -429,7 +429,7 @@ def execute(request: InputClass, ray: Ray, state: State) -> OutputClass:
             "return_type": "base64"
         }
         
-        model_result = stub.call(IMAGE_TO_3D_APP_ID, model_input, 'super-user')
+        model_result = stub.call(IMAGE_TO_3D_URL, model_input, 'super-user')
         
         if not model_result or 'result' not in model_result:
             raise Exception("3D model generation failed - no result returned")

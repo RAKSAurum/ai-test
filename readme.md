@@ -46,7 +46,7 @@ Chain two Openfabric apps together:
 
 - **Image to 3D**  
   App ID: `69543f29-4d41-4afc-7f29-3d51591f11eb`  
-  [View on Openfabric](https://openfabric.network/app/view/69543f29-4d41-4afc-7f29-3d51591f11eb)
+  [View on Openfabric](5891a64fe34041d98b0262bb1175ff07.node3.openfabric.network)
 
 Use their **manifest** and **schema** dynamically to structure requests.
 
