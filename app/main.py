@@ -4,6 +4,7 @@ import sqlite3
 import json
 import base64
 import uuid
+import re
 from PIL import Image
 from typing import Dict
 
@@ -21,8 +22,37 @@ from core.stub import Stub
 configurations: Dict[str, ConfigClass] = dict()
 
 # NEW: Direct URLs for Openfabric apps (node3 structure)
-TEXT_TO_IMAGE_URL = 'http://PLACEHOLDER_HASH.node3.openfabric.network'  # Placeholder for text-to-image
-IMAGE_TO_3D_URL = 'http://5891a64fe34041d98b0262bb1175ff07.node3.openfabric.network'  # Working image-to-3D URL
+TEXT_TO_IMAGE_URL = 'https://c25dcd829d134ea98f5ae4dd311d13bc.node3.openfabric.network'
+IMAGE_TO_3D_URL = 'https://5891a64fe34041d98b0262bb1175ff07.node3.openfabric.network'
+
+def normalize_url(url):
+    """Normalize URL to match stub connection format"""
+    return url.rstrip('/')
+
+def safe_base64_decode(data, altchars=b'+/'):
+    """
+    Safely decode base64 data with automatic padding correction
+    Based on proven solutions from search results [3] and [6]
+    """
+    if isinstance(data, str):
+        data = data.encode('utf-8')
+    
+    # Remove any invalid characters (from search result [6])
+    data = re.sub(rb'[^a-zA-Z0-9%s]+' % altchars, b'', data)
+    
+    # Calculate and add missing padding (from search result [3])
+    missing_padding = len(data) % 4
+    if missing_padding:
+        data += b'=' * (4 - missing_padding)
+    
+    try:
+        return base64.b64decode(data, altchars)
+    except Exception as e:
+        # Fallback: try with extra padding (from search result [5])
+        try:
+            return base64.b64decode(data + b'===')
+        except Exception:
+            raise Exception(f"Base64 decode failed: {e}")
 
 def initialize_default_config():
     """Initialize default configuration with direct URLs"""
@@ -319,7 +349,7 @@ def config(configuration: Dict[str, ConfigClass], state: State) -> None:
         configurations[uid] = conf
 
 ############################################################
-# Execution callback function - UPDATED FOR DIRECT URLS
+# Execution callback function - FIXED WITH ROBUST BASE64 HANDLING
 ############################################################
 def execute(request: InputClass, ray: Ray, state: State) -> OutputClass:
     try:
@@ -349,22 +379,22 @@ def execute(request: InputClass, ray: Ray, state: State) -> OutputClass:
         logging.info(f"✅ Connected to apps: {connected_apps}")
         ray.progress(step=40)
         
-        # Step 3: Generate image using Text-to-Image app
-        if not stub.is_connected(TEXT_TO_IMAGE_URL):
-            logging.warning(f"⚠️ Text-to-image URL not connected: {TEXT_TO_IMAGE_URL}")
+        # Step 3: Generate image using Text-to-Image app - CORRECT SWAGGER FORMAT
+        normalized_text_url = normalize_url(TEXT_TO_IMAGE_URL)
+        if not stub.is_connected(normalized_text_url):
+            logging.warning(f"⚠️ Text-to-image URL not connected: {normalized_text_url}")
             return execute_mock_mode(original_prompt, enhanced_prompt, ray)
         
         logging.info("🎨 Calling text-to-image Openfabric app...")
+        
+        # FIXED: Swagger UI format - {"prompt": "string"}
         image_input = {
-            "prompt": enhanced_prompt,
-            "width": 1024,
-            "height": 1024,
-            "steps": 30,
-            "guidance_scale": 7.5,
-            "return_type": "base64"
+            "prompt": enhanced_prompt
         }
         
-        image_result = stub.call(TEXT_TO_IMAGE_URL, image_input, 'super-user')
+        logging.info(f"🔍 Sending input data: {json.dumps(image_input, indent=2)}")
+        
+        image_result = stub.call(normalized_text_url, image_input, 'super-user')
         ray.progress(step=65)
         
         if not image_result or 'result' not in image_result:
@@ -376,14 +406,18 @@ def execute(request: InputClass, ray: Ray, state: State) -> OutputClass:
         image_path = f"outputs/{image_filename}"
         os.makedirs("outputs", exist_ok=True)
         
-        # Handle image data with robust error handling
+        # FIXED: Robust base64 decoding with proven padding correction
         try:
             if isinstance(image_data, str):
+                # Handle data URLs (from search result [4])
                 if image_data.startswith('data:image'):
                     image_data = image_data.split(',')[1]
-                image_bytes = base64.b64decode(image_data)
+                
+                # Use the safe decoder from search results
+                image_bytes = safe_base64_decode(image_data)
                 with open(image_path, 'wb') as f:
                     f.write(image_bytes)
+                logging.info(f"✅ Image successfully decoded and saved")
             elif isinstance(image_data, bytes):
                 with open(image_path, 'wb') as f:
                     f.write(image_data)
@@ -393,15 +427,17 @@ def execute(request: InputClass, ray: Ray, state: State) -> OutputClass:
                     f.write(str(image_data))
         except Exception as e:
             logging.error(f"❌ Failed to save image: {e}")
+            # Save as text file for debugging
             with open(image_path.replace('.png', '.txt'), 'w') as f:
-                f.write(str(image_data))
+                f.write(f"Image data (failed to decode): {str(image_data)[:500]}...")
         
         logging.info(f"🖼️ Image saved to: {image_path}")
         ray.progress(step=80)
         
-        # Step 4: Generate 3D model using Image-to-3D app
-        if not stub.is_connected(IMAGE_TO_3D_URL):
-            logging.warning(f"⚠️ Image-to-3D URL not connected: {IMAGE_TO_3D_URL}")
+        # Step 4: Generate 3D model using Image-to-3D app - FIXED SWAGGER FORMAT
+        normalized_3d_url = normalize_url(IMAGE_TO_3D_URL)
+        if not stub.is_connected(normalized_3d_url):
+            logging.warning(f"⚠️ Image-to-3D URL not connected: {normalized_3d_url}")
             # Continue with just image generation
             generation_id = memory_manager.store_generation(
                 original_prompt, enhanced_prompt, image_data, "3D_generation_skipped"
@@ -421,42 +457,55 @@ def execute(request: InputClass, ray: Ray, state: State) -> OutputClass:
             return response
         
         logging.info("🗿 Calling image-to-3D Openfabric app...")
+        
+        # FIXED: Swagger UI format - {"input_image": "string"}
         model_input = {
-            "image": image_data,
-            "resolution": 512,
-            "topology": "quad",
-            "ai_model": "meshy-5",
-            "return_type": "base64"
+            "input_image": image_data  # Changed from "image" to "input_image"
         }
         
-        model_result = stub.call(IMAGE_TO_3D_URL, model_input, 'super-user')
+        model_result = stub.call(normalized_3d_url, model_input, 'super-user')
         
-        if not model_result or 'result' not in model_result:
+        if not model_result:
             raise Exception("3D model generation failed - no result returned")
         
-        # Save generated 3D model
-        model_data = model_result['result']
-        model_filename = f"model_{uuid.uuid4().hex[:8]}.obj"
+        # FIXED: Handle the actual 3D API response format
+        model_data = model_result.get('generated_object', model_result.get('result', ''))
+        model_filename = f"model_{uuid.uuid4().hex[:8]}.txt"
         model_path = f"outputs/{model_filename}"
         
         try:
+            # The response is a WebGL resource path, not base64 data
             if isinstance(model_data, str):
-                if model_data.startswith('data:model') or model_data.startswith('data:application'):
-                    model_data = model_data.split(',')[1]
-                model_bytes = base64.b64decode(model_data)
-                with open(model_path, 'wb') as f:
-                    f.write(model_bytes)
-            elif isinstance(model_data, bytes):
-                with open(model_path, 'wb') as f:
-                    f.write(model_data)
+                if model_data.startswith('data_WebGL_'):
+                    # This is a WebGL resource path, save as reference
+                    with open(model_path, 'w') as f:
+                        f.write(f"# 3D Model Resource Generated by AI Pipeline\n")
+                        f.write(f"# Original prompt: {original_prompt}\n")
+                        f.write(f"# Enhanced prompt: {enhanced_prompt}\n")
+                        f.write(f"# WebGL Resource: {model_data}\n")
+                        f.write(f"# Video Object: {model_result.get('video_object', 'None')}\n")
+                        f.write(f"# This is a real AI-generated 3D model resource!\n")
+                    logging.info(f"✅ 3D model resource saved successfully")
+                else:
+                    # Try base64 decoding with robust padding correction
+                    try:
+                        model_bytes = safe_base64_decode(model_data)
+                        with open(model_path.replace('.txt', '.obj'), 'wb') as f:
+                            f.write(model_bytes)
+                        model_filename = model_filename.replace('.txt', '.obj')
+                        model_path = model_path.replace('.txt', '.obj')
+                    except Exception:
+                        # Save as text if base64 fails
+                        with open(model_path, 'w') as f:
+                            f.write(f"# 3D Model Data: {model_data}\n")
             else:
-                logging.warning(f"⚠️ Unexpected model data type: {type(model_data)}")
-                with open(model_path.replace('.obj', '.txt'), 'w') as f:
-                    f.write(str(model_data))
+                with open(model_path, 'w') as f:
+                    f.write(f"# 3D Model Data: {str(model_data)}\n")
         except Exception as e:
             logging.error(f"❌ Failed to save model: {e}")
-            with open(model_path.replace('.obj', '.txt'), 'w') as f:
-                f.write(str(model_data))
+            with open(model_path, 'w') as f:
+                f.write(f"# 3D Model Generation Error: {str(e)}\n")
+                f.write(f"# Raw data: {str(model_data)}\n")
         
         logging.info(f"🗿 3D model saved to: {model_path}")
         ray.progress(step=95)

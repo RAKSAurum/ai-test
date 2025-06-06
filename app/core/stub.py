@@ -27,23 +27,31 @@ class Remote:
             return self
 
     def call(self, input_data: dict):
-        """Make API call to the remote app"""
+        """Make API call to the remote app - FIXED JSON HANDLING"""
         if not self.connected:
             raise Exception(f"Not connected to {self.url}")
         
         try:
-            logging.info(f"🔄 Calling {self.url}/execute with input keys: {list(input_data.keys())}")
+            # FIXED: Use /execution endpoint with clean input data
+            logging.info(f"🔄 Calling {self.url}/execution with input keys: {list(input_data.keys())}")
             
             response = requests.post(
-                f"{self.url}/execute",
-                json=input_data,
-                timeout=60,  # Increased timeout for AI processing
+                f"{self.url}/execution",  # Correct endpoint
+                json=input_data,  # Use original input_data without extra fields
+                timeout=60,
                 headers={'Content-Type': 'application/json'}
             )
             
             if response.status_code == 200:
-                logging.info(f"✅ API call successful: {self.url}")
-                return response.json()
+                logging.info(f"✅ API call successful: {self.url}/execution")
+                
+                # FIXED: Handle JSON parsing errors gracefully
+                try:
+                    return response.json()
+                except json.JSONDecodeError as e:
+                    logging.error(f"❌ Invalid JSON response: {response.text[:200]}")
+                    # Return response text as result for non-JSON responses
+                    return {"result": response.text}
             else:
                 logging.error(f"❌ API call failed: {response.status_code} - {response.text}")
                 raise Exception(f"API call failed with status {response.status_code}")
@@ -62,11 +70,13 @@ class Stub:
         logging.info(f"🔍 Testing connectivity for direct URLs: {app_urls}")
         
         for app_url in app_urls:
-            # Clean the URL
+            # Clean and normalize the URL
             app_url = app_url.strip('/')
             if not app_url.startswith('http'):
                 app_url = f"http://{app_url}"
             
+            # Store normalized URL for consistent lookup
+            normalized_url = app_url.rstrip('/')
             connected = False
             
             try:
@@ -81,7 +91,7 @@ class Stub:
                 if status_code == 200:
                     try:
                         manifest = manifest_response.json()
-                        self._manifest[app_url] = manifest
+                        self._manifest[normalized_url] = manifest
                         logging.info(f"📋 Manifest loaded for {app_url}")
                         
                         # Try to get schemas if available
@@ -92,15 +102,15 @@ class Stub:
                             if input_response.status_code == 200 and output_response.status_code == 200:
                                 input_schema = input_response.json()
                                 output_schema = output_response.json()
-                                self._schema[app_url] = (input_schema, output_schema)
+                                self._schema[normalized_url] = (input_schema, output_schema)
                                 logging.info(f"📋 Schemas loaded for {app_url}")
                         except:
                             logging.debug(f"⚠️ Schemas not available for {app_url}")
                         
-                        # Establish connection
-                        self._connections[app_url] = Remote(app_url, f"{app_url}-proxy").connect()
+                        # Establish connection using normalized URL as key
+                        self._connections[normalized_url] = Remote(app_url, f"{app_url}-proxy").connect()
                         
-                        if self._connections[app_url].connected:
+                        if self._connections[normalized_url].connected:
                             logging.info(f"🎯 Successfully connected to {app_url}")
                             connected = True
                         
@@ -136,28 +146,24 @@ class Stub:
             logging.warning("⚠️ No apps connected - will use fallback mode")
 
     def call(self, app_url: str, input_data: dict, user_id: str) -> dict:
-        """Call an Openfabric app with input data"""
-        if app_url not in self._connections:
-            raise Exception(f"Connection not found for app URL: {app_url}")
+        """Call an Openfabric app with input data - FIXED: CLEAN INPUT"""
+        # Normalize URL for consistent lookup
+        normalized_url = app_url.rstrip('/')
         
-        connection = self._connections[app_url]
+        if normalized_url not in self._connections:
+            raise Exception(f"Connection not found for app URL: {normalized_url}")
+        
+        connection = self._connections[normalized_url]
         if not connection.connected:
-            raise Exception(f"Connection not established for app URL: {app_url}")
-        
-        # Enhanced input with user context
-        enhanced_input = {
-            **input_data,
-            "user_id": user_id,
-            "app_url": app_url,
-            "timestamp": time.time()
-        }
+            raise Exception(f"Connection not established for app URL: {normalized_url}")
         
         try:
-            response = connection.call(enhanced_input)
-            logging.info(f"✅ [{app_url}] Call successful")
+            # FIXED: Pass original input_data without extra fields that cause 422 error
+            response = connection.call(input_data)  # Removed enhanced_input
+            logging.info(f"✅ [{normalized_url}] Call successful")
             return response
         except Exception as e:
-            logging.error(f"❌ [{app_url}] Call failed: {e}")
+            logging.error(f"❌ [{normalized_url}] Call failed: {e}")
             raise
 
     def get_connected_apps(self) -> List[str]:
@@ -166,12 +172,16 @@ class Stub:
 
     def is_connected(self, app_url: str) -> bool:
         """Check if specific app is connected"""
-        return app_url in self._connections and self._connections[app_url].connected
+        # Normalize URL for consistent lookup
+        normalized_url = app_url.rstrip('/')
+        return normalized_url in self._connections and self._connections[normalized_url].connected
 
     def get_manifest(self, app_url: str) -> Optional[dict]:
         """Get manifest for specific app"""
-        return self._manifest.get(app_url)
+        normalized_url = app_url.rstrip('/')
+        return self._manifest.get(normalized_url)
 
     def get_schema(self, app_url: str) -> Optional[tuple]:
         """Get input/output schemas for specific app"""
-        return self._schema.get(app_url)
+        normalized_url = app_url.rstrip('/')
+        return self._schema.get(normalized_url)
