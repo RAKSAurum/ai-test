@@ -33,7 +33,7 @@ testing = ["datasets", "deepspeed", "evaluate", "parameterized", "pytest", "pyte
 name = "aiofiles"
 version = "23.2.1"
 description = "File support for asyncio."
-optional = true
+optional = false
 python-versions = ">=3.7"
 groups = ["main"]
 markers = "extra == \"gui\" or extra == \"all\""
@@ -46,7 +46,7 @@ files = [
 name = "altair"
 version = "5.5.0"
 description = "Vega-Altair: A declarative statistical visualization library for Python."
-optional = true
+optional = false
 python-versions = ">=3.9"
 groups = ["main"]
 markers = "extra == \"gui\" or extra == \"all\""
@@ -176,7 +176,7 @@ files = [
 name = "attrs"
 version = "25.3.0"
 description = "Classes Without Boilerplate"
-optional = true
+optional = false
 python-versions = ">=3.8"
 groups = ["main"]
 markers = "extra == \"gui\" or extra == \"all\""
@@ -752,7 +752,7 @@ cron = ["capturer (>=2.4)"]
 name = "contourpy"
 version = "1.3.0"
 description = "Python library for calculating contours of 2D quadrilateral grids"
-optional = true
+optional = false
 python-versions = ">=3.9"
 groups = ["main"]
 markers = "python_version < \"3.11\" and (extra == \"gui\" or extra == \"all\")"
@@ -838,7 +838,7 @@ test-no-images = ["pytest", "pytest-cov", "pytest-rerunfailures", "pytest-xdist"
 name = "contourpy"
 version = "1.3.2"
 description = "Python library for calculating contours of 2D quadrilateral grids"
-optional = true
+optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 markers = "python_version >= \"3.11\" and (extra == \"gui\" or extra == \"all\")"
@@ -916,7 +916,7 @@ test-no-images = ["pytest", "pytest-cov", "pytest-rerunfailures", "pytest-xdist"
 name = "cycler"
 version = "0.12.1"
 description = "Composable style cycles"
-optional = true
+optional = false
 python-versions = ">=3.8"
 groups = ["main"]
 markers = "extra == \"gui\" or extra == \"all\""
@@ -1031,7 +1031,7 @@ packaging = "*"
 name = "fastapi"
 version = "0.115.12"
 description = "FastAPI framework, high performance, easy to learn, fast to code, ready for production"
-optional = true
+optional = false
 python-versions = ">=3.8"
 groups = ["main"]
 markers = "extra == \"gui\" or extra == \"all\" or extra == \"memory\""
@@ -1053,7 +1053,7 @@ standard = ["email-validator (>=2.0.0)", "fastapi-cli[standard] (>=0.0.5)", "htt
 name = "ffmpy"
 version = "0.6.0"
 description = "A simple Python wrapper for FFmpeg"
-optional = true
+optional = false
 python-versions = ">=3.9"
 groups = ["main"]
 markers = "extra == \"gui\" or extra == \"all\""
@@ -1214,7 +1214,7 @@ files = [
 name = "fonttools"
 version = "4.58.1"
 description = "Tools to manipulate font files"
-optional = true
+optional = false
 python-versions = ">=3.9"
 groups = ["main"]
 markers = "extra == \"gui\" or extra == \"all\""
@@ -1459,7 +1459,7 @@ grpc = ["grpcio (>=1.44.0,<2.0.0)"]
 name = "gradio"
 version = "3.50.2"
 description = "Python library for easily interacting with trained machine learning models"
-optional = true
+optional = false
 python-versions = ">=3.8"
 groups = ["main"]
 markers = "extra == \"gui\" or extra == \"all\""
@@ -1502,7 +1502,7 @@ oauth = ["authlib", "itsdangerous"]
 name = "gradio-client"
 version = "0.6.1"
 description = "Python library for easily interacting with trained machine learning models"
-optional = true
+optional = false
 python-versions = ">=3.8"
 groups = ["main"]
 markers = "extra == \"gui\" or extra == \"all\""
@@ -1908,7 +1908,7 @@ type = ["pytest-mypy"]
 name = "importlib-resources"
 version = "6.5.2"
 description = "Read resources from Python packages"
-optional = true
+optional = false
 python-versions = ">=3.9"
 groups = ["main"]
 markers = "extra == \"gui\" or extra == \"all\" or extra == \"memory\""
@@ -1974,7 +1974,7 @@ i18n = ["Babel (>=2.7)"]
 name = "jsonschema"
 version = "4.24.0"
 description = "An implementation of JSON Schema validation for Python"
-optional = true
+optional = false
 python-versions = ">=3.9"
 groups = ["main"]
 markers = "extra == \"gui\" or extra == \"all\""
@@ -1997,7 +1997,7 @@ format-nongpl = ["fqdn", "idna", "isoduration", "jsonpointer (>1.13)", "rfc3339-
 name = "jsonschema-specifications"
 version = "2025.4.1"
 description = "The JSON Schema meta-schemas and vocabularies, exposed as a Registry"
-optional = true
+optional = false
 python-versions = ">=3.9"
 groups = ["main"]
 markers = "extra == \"gui\" or extra == \"all\""
@@ -2013,7 +2013,7 @@ referencing = ">=0.31.0"
 name = "kiwisolver"
 version = "1.4.7"
 description = "A fast implementation of the Cassowary constraint solver"
-optional = true
+optional = false
 python-versions = ">=3.8"
 groups = ["main"]
 markers = "python_version < \"3.11\" and (extra == \"gui\" or extra == \"all\")"
@@ -2138,7 +2138,7 @@ files = [
 name = "kiwisolver"
 version = "1.4.8"
 description = "A fast implementation of the Cassowary constraint solver"
-optional = true
+optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 markers = "python_version >= \"3.11\" and (extra == \"gui\" or extra == \"all\")"
@@ -2409,7 +2409,7 @@ tests = ["Flask (==1.1.2)", "faker (==4.18.0)", "mock", "pytest"]
 name = "matplotlib"
 version = "3.9.4"
 description = "Python plotting package"
-optional = true
+optional = false
 python-versions = ">=3.9"
 groups = ["main"]
 markers = "python_version < \"3.11\" and (extra == \"gui\" or extra == \"all\")"
@@ -2476,7 +2476,7 @@ dev = ["meson-python (>=0.13.1,<0.17.0)", "numpy (>=1.25)", "pybind11 (>=2.6,!=2
 name = "matplotlib"
 version = "3.10.3"
 description = "Python plotting package"
-optional = true
+optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 markers = "python_version >= \"3.11\" and (extra == \"gui\" or extra == \"all\")"
@@ -2745,7 +2745,7 @@ files = [
 name = "narwhals"
 version = "1.41.0"
 description = "Extremely lightweight compatibility layer between dataframe libraries"
-optional = true
+optional = false
 python-versions = ">=3.8"
 groups = ["main"]
 markers = "extra == \"gui\" or extra == \"all\""
@@ -3419,7 +3419,7 @@ files = [
 name = "orjson"
 version = "3.10.18"
 description = "Fast, correct Python JSON library supporting dataclasses, datetimes, and numpy"
-optional = true
+optional = false
 python-versions = ">=3.9"
 groups = ["main"]
 markers = "extra == \"gui\" or extra == \"all\" or extra == \"memory\""
@@ -3527,7 +3527,7 @@ files = [
 name = "pandas"
 version = "2.3.0"
 description = "Powerful data structures for data analysis, time series, and statistics"
-optional = true
+optional = false
 python-versions = ">=3.9"
 groups = ["main"]
 markers = "extra == \"gui\" or extra == \"all\""
@@ -4063,7 +4063,7 @@ typing-extensions = ">=4.6.0,<4.7.0 || >4.7.0"
 name = "pydub"
 version = "0.25.1"
 description = "Manipulate audio with an simple and easy high level interface"
-optional = true
+optional = false
 python-versions = "*"
 groups = ["main"]
 markers = "extra == \"gui\" or extra == \"all\""
@@ -4104,7 +4104,7 @@ windows-terminal = ["colorama (>=0.4.6)"]
 name = "pyparsing"
 version = "3.2.3"
 description = "pyparsing module - Classes and methods to define and execute parsing grammars"
-optional = true
+optional = false
 python-versions = ">=3.9"
 groups = ["main"]
 markers = "extra == \"gui\" or extra == \"all\""
@@ -4184,7 +4184,7 @@ testing = ["argcomplete", "attrs (>=19.2.0)", "hypothesis (>=3.56)", "mock", "no
 name = "python-dateutil"
 version = "2.9.0.post0"
 description = "Extensions to the standard Python datetime module"
-optional = true
+optional = false
 python-versions = "!=3.0.*,!=3.1.*,!=3.2.*,>=2.7"
 groups = ["main"]
 markers = "extra == \"gui\" or extra == \"all\" or extra == \"memory\""
@@ -4235,7 +4235,7 @@ docs = ["sphinx"]
 name = "python-multipart"
 version = "0.0.20"
 description = "A streaming multipart parser for Python"
-optional = true
+optional = false
 python-versions = ">=3.8"
 groups = ["main"]
 markers = "extra == \"gui\" or extra == \"all\""
@@ -4470,7 +4470,7 @@ ocsp = ["cryptography (>=36.0.1)", "pyopenssl (==20.0.1)", "requests (>=2.26.0)"
 name = "referencing"
 version = "0.36.2"
 description = "JSON Referencing + Python"
-optional = true
+optional = false
 python-versions = ">=3.9"
 groups = ["main"]
 markers = "extra == \"gui\" or extra == \"all\""
@@ -4655,7 +4655,7 @@ jupyter = ["ipywidgets (>=7.5.1,<9)"]
 name = "rpds-py"
 version = "0.25.1"
 description = "Python bindings to Rust's persistent data structures (rpds)"
-optional = true
+optional = false
 python-versions = ">=3.9"
 groups = ["main"]
 markers = "extra == \"gui\" or extra == \"all\""
@@ -4876,7 +4876,7 @@ torch = ["safetensors[numpy]", "torch (>=1.10)"]
 name = "semantic-version"
 version = "2.10.0"
 description = "A library implementing the 'SemVer' scheme."
-optional = true
+optional = false
 python-versions = ">=2.7"
 groups = ["main"]
 markers = "extra == \"gui\" or extra == \"all\""
@@ -4986,7 +4986,7 @@ websocket-client = "*"
 name = "starlette"
 version = "0.46.2"
 description = "The little ASGI library that shines."
-optional = true
+optional = false
 python-versions = ">=3.9"
 groups = ["main"]
 markers = "extra == \"gui\" or extra == \"all\" or extra == \"memory\""
@@ -5344,7 +5344,7 @@ typing-extensions = ">=4.12.0"
 name = "tzdata"
 version = "2025.2"
 description = "Provider of IANA time zone data"
-optional = true
+optional = false
 python-versions = ">=2"
 groups = ["main"]
 markers = "extra == \"gui\" or extra == \"all\""
@@ -5386,7 +5386,7 @@ files = [
 name = "uvicorn"
 version = "0.34.3"
 description = "The lightning-fast ASGI server."
-optional = true
+optional = false
 python-versions = ">=3.9"
 groups = ["main"]
 markers = "extra == \"gui\" or extra == \"all\" or extra == \"memory\""
@@ -5612,7 +5612,7 @@ test = ["websockets"]
 name = "websockets"
 version = "11.0.3"
 description = "An implementation of the WebSocket Protocol (RFC 6455 & 7692)"
-optional = true
+optional = false
 python-versions = ">=3.7"
 groups = ["main"]
 markers = "extra == \"gui\" or extra == \"all\" or extra == \"memory\""
@@ -5915,4 +5915,4 @@ memory = ["chromadb", "faiss-cpu", "redis"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.9,<4.0"
-content-hash = "296d2e6b154f2bb87917ee8596d5c9d13d16775a8026726adc9425c59c538c03"
+content-hash = "95082ef7e987fa903738d1ea2929adab630fa8a0154b8c79e870cad41ef79f17"

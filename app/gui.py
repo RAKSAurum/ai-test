@@ -166,6 +166,9 @@ class AI3DGeneratorGUI:
                 outputs=[prompt_input, generated_image, file_info]
             )
         
+        # Simple queue enablement for Gradio 3.50.2 - FIXED VERSION
+        interface.queue()
+        
         return interface
 
 def main():

@@ -40,7 +40,7 @@ uuid = { version = "*", python = ">=3.9" }
 
 # Optional GUI Dependencies
 # streamlit = { version = "1.18.0", optional = true } (==Compatability Issue==)
-gradio = { version = "^3.50.0", optional = true }
+gradio = { version = "^3.50.0" }
 
 # Advanced Memory Features (Bonus)
 faiss-cpu = { version = "^1.7.4", optional = true }
