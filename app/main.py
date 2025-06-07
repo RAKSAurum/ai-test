@@ -5,22 +5,20 @@ This module implements a complete AI pipeline that:
 1. Takes text prompts and enhances them using LLM
 2. Generates images from enhanced prompts via API queue workflow
 3. Converts images to 3D models using direct execution workflow
-4. Manages memory storage and retrieval of generations
 
 The pipeline uses discovered API workflows for robust generation handling.
 """
 
 import logging
 import os
-import sqlite3
-import json
-import uuid
 import requests
 import base64
 import time
 from PIL import Image
 from typing import Dict
 import io
+import json
+import uuid
 
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
@@ -238,107 +236,12 @@ def generate_3d_model_from_image(image_bytes: bytes, output_type: str = "object"
         raise
 
 
-class MemoryManager:
-    """
-    Manages persistent storage and retrieval of generation history.
-    
-    Uses SQLite database to store prompt enhancements, generated content,
-    and enable similarity-based recall for prompt enhancement context.
-    """
-    
-    def __init__(self):
-        """Initialize database connection and create tables if needed."""
-        self.db_path = "memory/memory.db"
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-        self.init_database()
-
-    def get_connection(self):
-        """Get thread-safe database connection."""
-        return sqlite3.connect(self.db_path, check_same_thread=False)
-
-    def init_database(self):
-        """Create database schema for generation storage."""
-        conn = self.get_connection()
-        try:
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS generations (
-                    id TEXT PRIMARY KEY,
-                    original_prompt TEXT,
-                    enhanced_prompt TEXT,
-                    image_data TEXT,
-                    model_data TEXT,
-                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            conn.commit()
-            logging.info("💾 Memory database initialized")
-        finally:
-            conn.close()
-
-    def store_generation(self, original_prompt: str, enhanced_prompt: str, 
-                        image_data: str, model_data: str) -> str:
-        """
-        Store a completed generation in memory.
-        
-        Args:
-            original_prompt: User's original text prompt
-            enhanced_prompt: LLM-enhanced version of prompt
-            image_data: Image generation metadata
-            model_data: 3D model generation metadata
-            
-        Returns:
-            str: Unique generation ID for retrieval
-        """
-        generation_id = str(uuid.uuid4())
-        conn = self.get_connection()
-        try:
-            conn.execute('''
-                INSERT INTO generations 
-                (id, original_prompt, enhanced_prompt, image_data, model_data)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (generation_id, original_prompt, enhanced_prompt, str(image_data), str(model_data)))
-            conn.commit()
-            logging.info(f"💾 Stored generation {generation_id}")
-            return generation_id
-        finally:
-            conn.close()
-
-    def recall_similar(self, prompt: str, limit: int = 5) -> list:
-        """
-        Find similar past generations for context enhancement.
-        
-        Args:
-            prompt: Current prompt to find similarities for
-            limit: Maximum number of similar generations to return
-            
-        Returns:
-            list: Similar generations with original and enhanced prompts
-        """
-        conn = self.get_connection()
-        try:
-            cursor = conn.execute('''
-                SELECT original_prompt, enhanced_prompt 
-                FROM generations 
-                WHERE original_prompt LIKE ? OR enhanced_prompt LIKE ?
-                ORDER BY timestamp DESC 
-                LIMIT ?
-            ''', (f'%{prompt}%', f'%{prompt}%', limit))
-            
-            results = cursor.fetchall()
-            return [{'original': row[0], 'enhanced': row[1]} for row in results]
-        except Exception as e:
-            logging.error(f"❌ Memory recall failed: {e}")
-            return []
-        finally:
-            conn.close()
-
-
 class DeepSeekLLMProcessor:
     """
     Handles prompt enhancement using local LLM models.
     
     Uses Ollama for text enhancement with fallback to rule-based enhancement.
-    Incorporates memory context for improved prompt quality.
+    Provides improved prompt quality for better image generation results.
     """
     
     def __init__(self):
@@ -351,7 +254,7 @@ class DeepSeekLLMProcessor:
 
     def enhance_prompt(self, original_prompt: str) -> str:
         """
-        Enhance user prompt using LLM with memory context.
+        Enhance user prompt using LLM for better image generation.
         
         Args:
             original_prompt: User's original text description
@@ -360,13 +263,7 @@ class DeepSeekLLMProcessor:
             str: Enhanced prompt optimized for image generation
         """
         try:
-            # Get similar past prompts for context
-            similar = memory_manager.recall_similar(original_prompt, 3)
-            context = ""
-            if similar:
-                context = f"Previous: {[s['enhanced'] for s in similar[:2]]}"
-            
-            enhanced = self._ollama_enhancement(original_prompt, context)
+            enhanced = self._ollama_enhancement(original_prompt)
             logging.info(f"🧠 Enhanced: '{original_prompt}' -> '{enhanced}'")
             return enhanced
             
@@ -374,13 +271,12 @@ class DeepSeekLLMProcessor:
             logging.error(f"❌ LLM processing failed: {e}")
             return self._rule_based_enhancement(original_prompt)
 
-    def _ollama_enhancement(self, prompt: str, context: str) -> str:
+    def _ollama_enhancement(self, prompt: str) -> str:
         """
         Use Ollama LLM for prompt enhancement.
         
         Args:
             prompt: Original user prompt
-            context: Historical context from similar prompts
             
         Returns:
             str: LLM-enhanced prompt or fallback to rule-based
@@ -405,6 +301,9 @@ class DeepSeekLLMProcessor:
         """
         Fallback rule-based prompt enhancement.
         
+        Applies predefined enhancement patterns to improve prompt quality
+        when LLM enhancement is unavailable.
+        
         Args:
             prompt: Original user prompt
             
@@ -428,7 +327,12 @@ class DeepSeekLLMProcessor:
 
 
 def initialize_default_config():
-    """Initialize default configuration with API endpoints."""
+    """
+    Initialize default configuration with API endpoints.
+    
+    Sets up the configuration dictionary with default API endpoints
+    for text-to-image and image-to-3D generation services.
+    """
     default_config = ConfigClass()
     default_config.app_ids = [TEXT_TO_IMAGE_URL, IMAGE_TO_3D_URL]
     configurations['super-user'] = default_config
@@ -439,7 +343,8 @@ def execute_mock_mode(original_prompt: str, enhanced_prompt: str, ray: Ray) -> O
     """
     Execute pipeline in mock mode when APIs are unavailable.
     
-    Creates placeholder files and simulates the full pipeline for testing.
+    Creates placeholder files and simulates the full pipeline for testing
+    and development purposes when external APIs are not accessible.
     
     Args:
         original_prompt: User's original prompt
@@ -447,7 +352,7 @@ def execute_mock_mode(original_prompt: str, enhanced_prompt: str, ray: Ray) -> O
         ray: Progress tracking object
         
     Returns:
-        OutputClass: Mock execution results
+        OutputClass: Mock execution results with placeholder files
     """
     try:
         logging.info("🎭 Mock mode")
@@ -472,11 +377,6 @@ def execute_mock_mode(original_prompt: str, enhanced_prompt: str, ray: Ray) -> O
             f.write("v 0.0 0.0 0.0\nv 1.0 0.0 0.0\nv 0.0 1.0 0.0\nf 1 2 3\n")
         
         ray.progress(step=95)
-        
-        generation_id = memory_manager.store_generation(
-            original_prompt, enhanced_prompt, "mock_image", "mock_model"
-        )
-        
         ray.progress(step=100)
         
         response = OutputClass()
@@ -486,7 +386,6 @@ def execute_mock_mode(original_prompt: str, enhanced_prompt: str, ray: Ray) -> O
             f"🧠 Enhanced: {enhanced_prompt[:100]}...\n"
             f"🖼️ Image: {image_filename}\n"
             f"🗿 3D Model: {model_filename}\n"
-            f"🆔 ID: {generation_id}\n"
             f"📊 Status: Demo mode"
         )
         
@@ -501,13 +400,15 @@ def execute_mock_mode(original_prompt: str, enhanced_prompt: str, ray: Ray) -> O
 
 # Initialize global components
 initialize_default_config()
-memory_manager = MemoryManager()
 llm_processor = DeepSeekLLMProcessor()
 
 
 def config(configuration: Dict[str, ConfigClass], state: State) -> None:
     """
     Configuration callback function for OpenFabric framework.
+    
+    Called by the OpenFabric framework to configure the application
+    with user-specific settings and API configurations.
     
     Args:
         configuration: Configuration settings from framework
@@ -525,7 +426,7 @@ def execute(request: InputClass, ray: Ray, state: State) -> OutputClass:
     1. Prompt enhancement using LLM
     2. Image generation via queue workflow
     3. 3D model generation via direct execution
-    4. Memory storage and result compilation
+    4. Result compilation and file management
     
     Args:
         request: Input containing user prompt and parameters
@@ -601,12 +502,6 @@ def execute(request: InputClass, ray: Ray, state: State) -> OutputClass:
             model_results = {"error": str(e)}
         
         ray.progress(step=95)
-        
-        # Store generation in memory
-        generation_id = memory_manager.store_generation(
-            original_prompt, enhanced_prompt, f"image_size_{len(image_bytes)}", str(model_results)
-        )
-        
         ray.progress(step=100)
         
         # Compile final response
@@ -617,7 +512,6 @@ def execute(request: InputClass, ray: Ray, state: State) -> OutputClass:
             f"🧠 Enhanced: {enhanced_prompt[:100]}...\n"
             f"🖼️ Image: {image_filename} ({len(image_bytes)} bytes)\n"
             f"🗿 3D Model: {model_filename}\n"
-            f"🆔 ID: {generation_id}\n"
             f"🚀 Using discovered pipeline workflow!"
         )
         
