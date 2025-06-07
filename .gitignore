@@ -1,7 +1,8 @@
 .venv
-__pycache__
+app/__pycache__
 app/core/__pycache__
 app/datastore
 app/downloads
 app/memory
 app/outputs
+app/ontology_dc8f06af066e4a7880a5938933236037/__pycache__
