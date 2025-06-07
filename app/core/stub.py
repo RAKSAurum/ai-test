@@ -1,29 +1,65 @@
+"""
+Remote API Connection Stub
+
+This module provides a simplified interface for connecting to and calling remote applications
+via HTTP API endpoints. It handles connection management and API calls with proper error handling.
+"""
+
 import requests
 import logging
-from typing import List, Dict, Optional
+from typing import List, Dict
 import json
 
+
 class Remote:
+    """
+    Represents a connection to a remote application.
+    
+    Handles the connection lifecycle and API calls to a single remote endpoint.
+    """
+    
     def __init__(self, url: str, proxy_name: str):
+        """
+        Initialize a remote connection.
+        
+        Args:
+            url: The base URL of the remote application
+            proxy_name: Name identifier for this proxy connection
+        """
         self.url = url
         self.proxy_name = proxy_name
         self.connected = False
 
     def connect(self):
-        """Establish connection to remote app"""
+        """
+        Establish connection to the remote application by checking its manifest endpoint.
+        
+        Returns:
+            self: Returns self for method chaining
+        """
         try:
             response = requests.get(f"{self.url}/manifest", timeout=10)
             self.connected = response.status_code == 200
             if self.connected:
                 logging.info(f"✅ Connected to {self.url}")
-            return self
         except Exception as e:
             logging.error(f"❌ Connection failed: {e}")
             self.connected = False
-            return self
+        return self
 
     def call(self, input_data: dict):
-        """Make API call to the remote app - SIMPLIFIED FOR COMPATIBILITY"""
+        """
+        Make an API call to the remote application.
+        
+        Args:
+            input_data: Dictionary containing the data to send to the remote app
+            
+        Returns:
+            dict: Response from the remote application
+            
+        Raises:
+            Exception: If not connected or if the API call fails
+        """
         if not self.connected:
             raise Exception(f"Not connected to {self.url}")
         
@@ -36,7 +72,7 @@ class Remote:
             )
             
             if response.status_code == 200:
-                logging.info(f"✅ API call successful")
+                logging.info("✅ API call successful")
                 try:
                     return response.json()
                 except json.JSONDecodeError:
@@ -48,27 +84,65 @@ class Remote:
             logging.error(f"❌ API call failed: {e}")
             raise
 
+
 class Stub:
+    """
+    Main stub class for managing connections to multiple remote applications.
+    
+    Provides a unified interface for connecting to and calling multiple remote apps,
+    with fallback mechanisms for compatibility.
+    """
+    
     def __init__(self, app_urls: List[str]):
+        """
+        Initialize the stub with a list of application URLs.
+        
+        Args:
+            app_urls: List of URLs for remote applications to connect to
+        """
         self._connections: Dict[str, Remote] = {}
         self.apps = app_urls
+        self._establish_connections(app_urls)
+        self._log_connection_status()
 
-        for app_url in app_urls:
-            app_url = app_url.strip('/').replace('http://', 'https://')
-            if not app_url.startswith('https://'):
-                app_url = f"https://{app_url}"
+    def _normalize_url(self, url: str) -> str:
+        """
+        Normalize a URL to ensure consistent formatting.
+        
+        Args:
+            url: Raw URL string
             
-            normalized_url = app_url.rstrip('/')
+        Returns:
+            str: Normalized URL with https protocol and no trailing slash
+        """
+        url = url.strip('/').replace('http://', 'https://')
+        if not url.startswith('https://'):
+            url = f"https://{url}"
+        return url.rstrip('/')
+
+    def _establish_connections(self, app_urls: List[str]):
+        """
+        Attempt to establish connections to all provided application URLs.
+        
+        Args:
+            app_urls: List of application URLs to connect to
+        """
+        for app_url in app_urls:
+            normalized_url = self._normalize_url(app_url)
             
             try:
-                manifest_response = requests.get(f"{app_url}/manifest", timeout=10)
+                # Test connection via manifest endpoint
+                manifest_response = requests.get(f"{normalized_url}/manifest", timeout=10)
                 if manifest_response.status_code == 200:
-                    self._connections[normalized_url] = Remote(app_url, f"{app_url}-proxy").connect()
-                    if self._connections[normalized_url].connected:
-                        logging.info(f"🎯 Connected to {app_url}")
+                    remote = Remote(normalized_url, f"{normalized_url}-proxy")
+                    self._connections[normalized_url] = remote.connect()
+                    if remote.connected:
+                        logging.info(f"🎯 Connected to {normalized_url}")
             except Exception as e:
-                logging.error(f"❌ Failed to connect to {app_url}: {e}")
+                logging.error(f"❌ Failed to connect to {normalized_url}: {e}")
 
+    def _log_connection_status(self):
+        """Log the overall connection status after initialization."""
         connected_apps = self.get_connected_apps()
         if connected_apps:
             logging.info(f"✅ Connected to {len(connected_apps)} apps")
@@ -76,10 +150,26 @@ class Stub:
             logging.warning("⚠️ No apps connected - using direct API calls")
 
     def call(self, app_url: str, input_data: dict, user_id: str) -> dict:
-        """Call an Openfabric app with input data - COMPATIBILITY WRAPPER"""
-        normalized_url = app_url.rstrip('/')
+        """
+        Call a remote application with input data.
         
-        # For compatibility, but main.py now uses direct API calls
+        This is a compatibility wrapper that attempts to use established connections
+        but falls back gracefully for direct API usage.
+        
+        Args:
+            app_url: URL of the application to call
+            input_data: Data to send to the application
+            user_id: User identifier (maintained for compatibility)
+            
+        Returns:
+            dict: Response from the remote application or fallback indicator
+            
+        Raises:
+            Exception: If the API call fails
+        """
+        normalized_url = self._normalize_url(app_url)
+        
+        # Check if we have an established connection
         if normalized_url not in self._connections:
             logging.warning(f"Connection not found for: {normalized_url}, using direct calls")
             return {"result": "using_direct_api_calls"}
@@ -90,17 +180,30 @@ class Stub:
             return {"result": "using_direct_api_calls"}
         
         try:
-            response = connection.call(input_data)
-            return response
+            return connection.call(input_data)
         except Exception as e:
             logging.error(f"❌ Call failed: {e}")
             raise
 
     def get_connected_apps(self) -> List[str]:
-        """Get list of successfully connected apps"""
+        """
+        Get a list of successfully connected application URLs.
+        
+        Returns:
+            List[str]: URLs of applications that are currently connected
+        """
         return [url for url, conn in self._connections.items() if conn.connected]
 
     def is_connected(self, app_url: str) -> bool:
-        """Check if specific app is connected"""
-        normalized_url = app_url.rstrip('/')
-        return normalized_url in self._connections and self._connections[normalized_url].connected
+        """
+        Check if a specific application is connected.
+        
+        Args:
+            app_url: URL of the application to check
+            
+        Returns:
+            bool: True if the application is connected, False otherwise
+        """
+        normalized_url = self._normalize_url(app_url)
+        return (normalized_url in self._connections and 
+                self._connections[normalized_url].connected)

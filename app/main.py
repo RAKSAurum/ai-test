@@ -1,3 +1,15 @@
+"""
+AI Pipeline for Text-to-Image-to-3D Generation
+
+This module implements a complete AI pipeline that:
+1. Takes text prompts and enhances them using LLM
+2. Generates images from enhanced prompts via API queue workflow
+3. Converts images to 3D models using direct execution workflow
+4. Manages memory storage and retrieval of generations
+
+The pipeline uses discovered API workflows for robust generation handling.
+"""
+
 import logging
 import os
 import sqlite3
@@ -20,24 +32,40 @@ from ontology_dc8f06af066e4a7880a5938933236037.output import OutputClass
 from openfabric_pysdk.context import State, Ray
 from core.stub import Stub
 
-# Configurations for the app
+# Global configurations and API endpoints
 configurations: Dict[str, ConfigClass] = dict()
-
-# Direct URLs for Openfabric apps
 TEXT_TO_IMAGE_URL = 'https://c25dcd829d134ea98f5ae4dd311d13bc.node3.openfabric.network'
 IMAGE_TO_3D_URL = 'https://5891a64fe34041d98b0262bb1175ff07.node3.openfabric.network'
 
-def normalize_url(url):
-    """Normalize URL to match stub connection format"""
-    return url.rstrip('/')
 
-def generate_image_via_queue(prompt, max_wait_time=300):
-    """Generate image using your discovered queue workflow"""
+def generate_image_via_queue(prompt: str, max_wait_time: int = 300) -> bytes:
+    """
+    Generate image using queue-based workflow for reliable processing.
+    
+    Uses a 3-step process:
+    1. Submit prompt to generation queue
+    2. Poll queue status until completion
+    3. Download generated image via resource endpoint
+    
+    Args:
+        prompt: Text description for image generation
+        max_wait_time: Maximum seconds to wait for generation completion
+        
+    Returns:
+        bytes: Generated image data
+        
+    Raises:
+        Exception: If queue submission, polling, or download fails
+    """
     try:
         logging.info(f"🎨 Generating image for prompt: '{prompt}'")
         
-        # Step 1: Submit to queue
-        response = requests.post(f"{TEXT_TO_IMAGE_URL}/queue/post", json={"prompt": prompt}, timeout=30)
+        # Submit to generation queue
+        response = requests.post(
+            f"{TEXT_TO_IMAGE_URL}/queue/post",
+            json={"prompt": prompt},
+            timeout=30
+        )
         if response.status_code != 200:
             raise Exception(f"Queue submission failed: {response.status_code}")
         
@@ -45,11 +73,10 @@ def generate_image_via_queue(prompt, max_wait_time=300):
         qid = queue_data['qid']
         logging.info(f"✅ Image generation queued with ID: {qid}")
         
-        # Step 2: Poll for completion using your discovered method
+        # Poll for completion
         start_time = time.time()
         while time.time() - start_time < max_wait_time:
             try:
-                # Check queue status
                 status_response = requests.get(f"{TEXT_TO_IMAGE_URL}/queue/list", timeout=10)
                 if status_response.status_code == 200:
                     rays = status_response.json()
@@ -68,8 +95,12 @@ def generate_image_via_queue(prompt, max_wait_time=300):
         else:
             raise Exception(f"Image generation timed out after {max_wait_time} seconds")
         
-        # Step 3: Get the generated image using your method
-        result_response = requests.get(f"{TEXT_TO_IMAGE_URL}/queue/get", params={"qid": qid}, timeout=10)
+        # Retrieve generated image
+        result_response = requests.get(
+            f"{TEXT_TO_IMAGE_URL}/queue/get",
+            params={"qid": qid},
+            timeout=10
+        )
         if result_response.status_code != 200:
             raise Exception(f"Failed to get result: {result_response.status_code}")
         
@@ -77,9 +108,13 @@ def generate_image_via_queue(prompt, max_wait_time=300):
         if 'result' not in result_data:
             raise Exception("Image generation failed - no result found")
         
-        # Step 4: Download the generated image using your resource method
+        # Download image using resource endpoint
         resource_id = result_data['result']
-        download_response = requests.get(f"{TEXT_TO_IMAGE_URL}/resource", params={"reid": resource_id}, timeout=30)
+        download_response = requests.get(
+            f"{TEXT_TO_IMAGE_URL}/resource",
+            params={"reid": resource_id},
+            timeout=30
+        )
         
         if download_response.status_code != 200:
             raise Exception(f"Failed to download image: {download_response.status_code}")
@@ -92,16 +127,37 @@ def generate_image_via_queue(prompt, max_wait_time=300):
         logging.error(f"❌ Image generation failed: {e}")
         raise
 
-def generate_3d_model_from_image(image_bytes, output_type="object", timeout=600):
-    """Generate 3D model using your discovered direct execution method"""
+
+def generate_3d_model_from_image(image_bytes: bytes, output_type: str = "object", timeout: int = 600) -> Dict:
+    """
+    Generate 3D model from image using direct execution workflow.
+    
+    Implements a 5-step process:
+    1. Convert image to base64 data URL
+    2. Configure 3D generation parameters
+    3. Submit image for 3D processing
+    4. Parse JSON response with error handling
+    5. Download generated 3D resources
+    
+    Args:
+        image_bytes: Raw image data to convert to 3D
+        output_type: Type of 3D output to generate
+        timeout: Maximum seconds to wait for 3D generation
+        
+    Returns:
+        Dict: Contains 3D model data, sizes, and metadata
+        
+    Raises:
+        Exception: If 3D generation or download fails
+    """
     try:
         logging.info("🗿 Converting image to 3D model...")
         
-        # Step 1: Convert image to base64 with data URL prefix (your discovery)
+        # Convert image to base64 data URL format
         image_base64 = base64.b64encode(image_bytes).decode('utf-8')
         image_data_url = f"data:image/png;base64,{image_base64}"
         
-        # Step 2: Configure 3D model generation (your method)
+        # Configure 3D generation parameters
         try:
             config_response = requests.post(
                 f"{IMAGE_TO_3D_URL}/config",
@@ -113,7 +169,7 @@ def generate_3d_model_from_image(image_bytes, output_type="object", timeout=600)
         except Exception as e:
             logging.warning(f"Config request failed (continuing anyway): {e}")
         
-        # Step 3: Generate 3D model using your direct execution method
+        # Submit for 3D generation
         logging.info("🔄 Sending 3D generation request...")
         model_response = requests.post(
             f"{IMAGE_TO_3D_URL}/execution",
@@ -126,23 +182,23 @@ def generate_3d_model_from_image(image_bytes, output_type="object", timeout=600)
         if model_response.status_code != 200:
             raise Exception(f"3D model generation failed: {model_response.status_code} - {model_response.text}")
         
-        # Step 4: Parse JSON response with your error handling
+        # Parse JSON response with error recovery
         try:
             model_result = model_response.json()
         except ValueError as json_error:
             logging.warning(f"JSON parsing error, attempting to fix: {json_error}")
-            # Your discovered fix for malformed JSON
             response_text = model_response.text
             try:
                 fixed_json = response_text.replace("'", '"').replace('None', 'null')
                 model_result = json.loads(fixed_json)
                 logging.info("✅ Successfully parsed fixed JSON response")
-            except Exception as fix_error:
+            except Exception:
                 raise Exception(f"Invalid JSON response from 3D API: {json_error}")
         
-        # Step 5: Download 3D model using your resource method
-        results = {}
+        # Download generated 3D resources
+        results = {'model_result': model_result}
         
+        # Download 3D object file
         if 'generated_object' in model_result and model_result['generated_object']:
             resource_path = model_result['generated_object']
             logging.info(f"3D object resource path: {resource_path}")
@@ -164,7 +220,7 @@ def generate_3d_model_from_image(image_bytes, output_type="object", timeout=600)
             except Exception as e:
                 logging.error(f"Error downloading 3D object: {e}")
         
-        # Handle video object if available
+        # Download video object if available
         if 'video_object' in model_result and model_result['video_object']:
             try:
                 video_response = requests.get(model_result['video_object'], timeout=30)
@@ -175,34 +231,33 @@ def generate_3d_model_from_image(image_bytes, output_type="object", timeout=600)
             except Exception as e:
                 logging.error(f"Error downloading video: {e}")
         
-        results['model_result'] = model_result
         return results
         
     except Exception as e:
         logging.error(f"❌ 3D model generation failed: {e}")
         raise
 
-def initialize_default_config():
-    """Initialize default configuration with direct URLs"""
-    default_config = ConfigClass()
-    default_config.app_ids = [TEXT_TO_IMAGE_URL, IMAGE_TO_3D_URL]
-    configurations['super-user'] = default_config
-    logging.info("🔧 Default configuration initialized")
 
-# Initialize at module level
-initialize_default_config()
-
-# Memory storage
 class MemoryManager:
+    """
+    Manages persistent storage and retrieval of generation history.
+    
+    Uses SQLite database to store prompt enhancements, generated content,
+    and enable similarity-based recall for prompt enhancement context.
+    """
+    
     def __init__(self):
+        """Initialize database connection and create tables if needed."""
         self.db_path = "memory/memory.db"
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         self.init_database()
 
     def get_connection(self):
+        """Get thread-safe database connection."""
         return sqlite3.connect(self.db_path, check_same_thread=False)
 
     def init_database(self):
+        """Create database schema for generation storage."""
         conn = self.get_connection()
         try:
             conn.execute('''
@@ -220,7 +275,20 @@ class MemoryManager:
         finally:
             conn.close()
 
-    def store_generation(self, original_prompt, enhanced_prompt, image_data, model_data):
+    def store_generation(self, original_prompt: str, enhanced_prompt: str, 
+                        image_data: str, model_data: str) -> str:
+        """
+        Store a completed generation in memory.
+        
+        Args:
+            original_prompt: User's original text prompt
+            enhanced_prompt: LLM-enhanced version of prompt
+            image_data: Image generation metadata
+            model_data: 3D model generation metadata
+            
+        Returns:
+            str: Unique generation ID for retrieval
+        """
         generation_id = str(uuid.uuid4())
         conn = self.get_connection()
         try:
@@ -235,7 +303,17 @@ class MemoryManager:
         finally:
             conn.close()
 
-    def recall_similar(self, prompt, limit=5):
+    def recall_similar(self, prompt: str, limit: int = 5) -> list:
+        """
+        Find similar past generations for context enhancement.
+        
+        Args:
+            prompt: Current prompt to find similarities for
+            limit: Maximum number of similar generations to return
+            
+        Returns:
+            list: Similar generations with original and enhanced prompts
+        """
         conn = self.get_connection()
         try:
             cursor = conn.execute('''
@@ -254,12 +332,17 @@ class MemoryManager:
         finally:
             conn.close()
 
-# Global memory manager
-memory_manager = MemoryManager()
 
-# DeepSeek LLM Processor
 class DeepSeekLLMProcessor:
+    """
+    Handles prompt enhancement using local LLM models.
+    
+    Uses Ollama for text enhancement with fallback to rule-based enhancement.
+    Incorporates memory context for improved prompt quality.
+    """
+    
     def __init__(self):
+        """Initialize LLM processor with model configuration."""
         self.model = None
         self.tokenizer = None
         self.model_loaded = False
@@ -267,8 +350,17 @@ class DeepSeekLLMProcessor:
         self.model_name = "deepseek-r1:1.5b"
 
     def enhance_prompt(self, original_prompt: str) -> str:
-        """Enhance the user prompt with Ollama"""
+        """
+        Enhance user prompt using LLM with memory context.
+        
+        Args:
+            original_prompt: User's original text description
+            
+        Returns:
+            str: Enhanced prompt optimized for image generation
+        """
         try:
+            # Get similar past prompts for context
             similar = memory_manager.recall_similar(original_prompt, 3)
             context = ""
             if similar:
@@ -283,6 +375,16 @@ class DeepSeekLLMProcessor:
             return self._rule_based_enhancement(original_prompt)
 
     def _ollama_enhancement(self, prompt: str, context: str) -> str:
+        """
+        Use Ollama LLM for prompt enhancement.
+        
+        Args:
+            prompt: Original user prompt
+            context: Historical context from similar prompts
+            
+        Returns:
+            str: LLM-enhanced prompt or fallback to rule-based
+        """
         try:
             enhancement_prompt = f"Enhance this image prompt for high-quality generation: {prompt}"
             
@@ -300,6 +402,15 @@ class DeepSeekLLMProcessor:
             return self._rule_based_enhancement(prompt)
 
     def _rule_based_enhancement(self, prompt: str) -> str:
+        """
+        Fallback rule-based prompt enhancement.
+        
+        Args:
+            prompt: Original user prompt
+            
+        Returns:
+            str: Enhanced prompt using predefined rules
+        """
         enhancements = {
             'robot': 'sleek mechanical robot with glowing circuits and metallic finish',
             'dragon': 'majestic dragon with iridescent scales',
@@ -315,120 +426,36 @@ class DeepSeekLLMProcessor:
         enhanced += ', highly detailed, 8k resolution, professional lighting, digital art masterpiece'
         return enhanced.title()
 
-# Global LLM processor
-llm_processor = DeepSeekLLMProcessor()
 
-############################################################
-# Config callback function
-############################################################
-def config(configuration: Dict[str, ConfigClass], state: State) -> None:
-    for uid, conf in configuration.items():
-        configurations[uid] = conf
+def initialize_default_config():
+    """Initialize default configuration with API endpoints."""
+    default_config = ConfigClass()
+    default_config.app_ids = [TEXT_TO_IMAGE_URL, IMAGE_TO_3D_URL]
+    configurations['super-user'] = default_config
+    logging.info("🔧 Default configuration initialized")
 
-############################################################
-# Main execution function - BASED ON YOUR PIPELINE DISCOVERY
-############################################################
-def execute(request: InputClass, ray: Ray, state: State) -> OutputClass:
-    try:
-        original_prompt = request.prompt
-        logging.info(f"🎯 Processing: '{original_prompt}'")
-        ray.progress(step=10)
-        
-        # Step 1: Enhance prompt
-        enhanced_prompt = llm_processor.enhance_prompt(original_prompt)
-        ray.progress(step=25)
-        
-        # Step 2: Generate image using your discovered queue workflow
-        logging.info("🎨 Generating image via your discovered queue workflow...")
-        
-        try:
-            image_bytes = generate_image_via_queue(enhanced_prompt, max_wait_time=300)
-            
-            # Save image
-            image_filename = f"image_{uuid.uuid4().hex[:8]}.png"
-            image_path = f"outputs/{image_filename}"
-            os.makedirs("outputs", exist_ok=True)
-            
-            with open(image_path, 'wb') as f:
-                f.write(image_bytes)
-            logging.info(f"✅ Image saved: {image_path} ({len(image_bytes)} bytes)")
-            
-        except Exception as e:
-            logging.error(f"❌ Image generation failed: {e}")
-            return execute_mock_mode(original_prompt, enhanced_prompt, ray)
-        
-        ray.progress(step=65)
-        
-        # Step 3: Generate 3D model using your discovered direct execution method
-        logging.info("🗿 Generating 3D model via your discovered direct execution...")
-        
-        try:
-            model_results = generate_3d_model_from_image(image_bytes, output_type="object", timeout=600)
-            
-            # Save 3D model
-            model_filename = f"model_{uuid.uuid4().hex[:8]}.glb"
-            model_path = f"outputs/{model_filename}"
-            
-            if 'object_bytes' in model_results:
-                with open(model_path, 'wb') as f:
-                    f.write(model_results['object_bytes'])
-                logging.info(f"✅ 3D model saved: {model_path} ({model_results['object_size']} bytes)")
-            else:
-                # Save reference file
-                with open(model_path.replace('.glb', '.txt'), 'w') as f:
-                    f.write(f"3D Model Generation Result:\n")
-                    f.write(f"{json.dumps(model_results.get('model_result', {}), indent=2)}\n")
-                model_filename = model_filename.replace('.glb', '.txt')
-                logging.info("📄 3D model reference saved")
-            
-            # Save video if available
-            if 'video_bytes' in model_results:
-                video_filename = f"video_{uuid.uuid4().hex[:8]}.mp4"
-                video_path = f"outputs/{video_filename}"
-                with open(video_path, 'wb') as f:
-                    f.write(model_results['video_bytes'])
-                logging.info(f"✅ 3D video saved: {video_path} ({model_results['video_size']} bytes)")
-            
-        except Exception as e:
-            logging.error(f"❌ 3D model generation failed: {e}")
-            model_filename = "3d_generation_failed.txt"
-            model_results = {"error": str(e)}
-        
-        ray.progress(step=95)
-        
-        # Store generation
-        generation_id = memory_manager.store_generation(
-            original_prompt, enhanced_prompt, f"image_size_{len(image_bytes)}", str(model_results)
-        )
-        
-        ray.progress(step=100)
-        
-        response = OutputClass()
-        response.message = (
-            f"🎨 COMPLETE AI PIPELINE SUCCESS!\n"
-            f"📝 Original: {original_prompt}\n"
-            f"🧠 Enhanced: {enhanced_prompt[:100]}...\n"
-            f"🖼️ Image: {image_filename} ({len(image_bytes)} bytes)\n"
-            f"🗿 3D Model: {model_filename}\n"
-            f"🆔 ID: {generation_id}\n"
-            f"🚀 Using your discovered pipeline workflow!"
-        )
-        
-        return response
-        
-    except Exception as e:
-        logging.error(f"❌ Pipeline failed: {e}")
-        return execute_mock_mode(original_prompt, enhanced_prompt, ray)
 
 def execute_mock_mode(original_prompt: str, enhanced_prompt: str, ray: Ray) -> OutputClass:
-    """Execute in mock mode when APIs fail"""
+    """
+    Execute pipeline in mock mode when APIs are unavailable.
+    
+    Creates placeholder files and simulates the full pipeline for testing.
+    
+    Args:
+        original_prompt: User's original prompt
+        enhanced_prompt: Enhanced version of prompt
+        ray: Progress tracking object
+        
+    Returns:
+        OutputClass: Mock execution results
+    """
     try:
         logging.info("🎭 Mock mode")
         ray.progress(step=60)
         
         os.makedirs("outputs", exist_ok=True)
         
-        # Mock image
+        # Create mock image
         image_filename = f"mock_image_{uuid.uuid4().hex[:8]}.png"
         image_path = f"outputs/{image_filename}"
         placeholder_img = Image.new('RGB', (512, 512), color=(139, 69, 19))
@@ -436,7 +463,7 @@ def execute_mock_mode(original_prompt: str, enhanced_prompt: str, ray: Ray) -> O
         
         ray.progress(step=80)
         
-        # Mock 3D model
+        # Create mock 3D model
         model_filename = f"mock_model_{uuid.uuid4().hex[:8]}.obj"
         model_path = f"outputs/{model_filename}"
         with open(model_path, 'w') as f:
@@ -470,3 +497,132 @@ def execute_mock_mode(original_prompt: str, enhanced_prompt: str, ray: Ray) -> O
         response = OutputClass()
         response.message = f"❌ Error: {str(e)}"
         return response
+
+
+# Initialize global components
+initialize_default_config()
+memory_manager = MemoryManager()
+llm_processor = DeepSeekLLMProcessor()
+
+
+def config(configuration: Dict[str, ConfigClass], state: State) -> None:
+    """
+    Configuration callback function for OpenFabric framework.
+    
+    Args:
+        configuration: Configuration settings from framework
+        state: Current application state
+    """
+    for uid, conf in configuration.items():
+        configurations[uid] = conf
+
+
+def execute(request: InputClass, ray: Ray, state: State) -> OutputClass:
+    """
+    Main execution function implementing the complete AI pipeline.
+    
+    Orchestrates the full text-to-image-to-3D generation workflow:
+    1. Prompt enhancement using LLM
+    2. Image generation via queue workflow
+    3. 3D model generation via direct execution
+    4. Memory storage and result compilation
+    
+    Args:
+        request: Input containing user prompt and parameters
+        ray: Progress tracking and communication object
+        state: Current application state
+        
+    Returns:
+        OutputClass: Complete pipeline results with generated content paths
+    """
+    try:
+        original_prompt = request.prompt
+        logging.info(f"🎯 Processing: '{original_prompt}'")
+        ray.progress(step=10)
+        
+        # Step 1: Enhance prompt using LLM
+        enhanced_prompt = llm_processor.enhance_prompt(original_prompt)
+        ray.progress(step=25)
+        
+        # Step 2: Generate image using queue workflow
+        logging.info("🎨 Generating image via queue workflow...")
+        
+        try:
+            image_bytes = generate_image_via_queue(enhanced_prompt, max_wait_time=300)
+            
+            # Save generated image
+            image_filename = f"image_{uuid.uuid4().hex[:8]}.png"
+            image_path = f"outputs/{image_filename}"
+            os.makedirs("outputs", exist_ok=True)
+            
+            with open(image_path, 'wb') as f:
+                f.write(image_bytes)
+            logging.info(f"✅ Image saved: {image_path} ({len(image_bytes)} bytes)")
+            
+        except Exception as e:
+            logging.error(f"❌ Image generation failed: {e}")
+            return execute_mock_mode(original_prompt, enhanced_prompt, ray)
+        
+        ray.progress(step=65)
+        
+        # Step 3: Generate 3D model using direct execution
+        logging.info("🗿 Generating 3D model via direct execution...")
+        
+        try:
+            model_results = generate_3d_model_from_image(image_bytes, output_type="object", timeout=600)
+            
+            # Save 3D model
+            model_filename = f"model_{uuid.uuid4().hex[:8]}.glb"
+            model_path = f"outputs/{model_filename}"
+            
+            if 'object_bytes' in model_results:
+                with open(model_path, 'wb') as f:
+                    f.write(model_results['object_bytes'])
+                logging.info(f"✅ 3D model saved: {model_path} ({model_results['object_size']} bytes)")
+            else:
+                # Save reference file if binary not available
+                with open(model_path.replace('.glb', '.txt'), 'w') as f:
+                    f.write(f"3D Model Generation Result:\n")
+                    f.write(f"{json.dumps(model_results.get('model_result', {}), indent=2)}\n")
+                model_filename = model_filename.replace('.glb', '.txt')
+                logging.info("📄 3D model reference saved")
+            
+            # Save video if available
+            if 'video_bytes' in model_results:
+                video_filename = f"video_{uuid.uuid4().hex[:8]}.mp4"
+                video_path = f"outputs/{video_filename}"
+                with open(video_path, 'wb') as f:
+                    f.write(model_results['video_bytes'])
+                logging.info(f"✅ 3D video saved: {video_path} ({model_results['video_size']} bytes)")
+            
+        except Exception as e:
+            logging.error(f"❌ 3D model generation failed: {e}")
+            model_filename = "3d_generation_failed.txt"
+            model_results = {"error": str(e)}
+        
+        ray.progress(step=95)
+        
+        # Store generation in memory
+        generation_id = memory_manager.store_generation(
+            original_prompt, enhanced_prompt, f"image_size_{len(image_bytes)}", str(model_results)
+        )
+        
+        ray.progress(step=100)
+        
+        # Compile final response
+        response = OutputClass()
+        response.message = (
+            f"🎨 COMPLETE AI PIPELINE SUCCESS!\n"
+            f"📝 Original: {original_prompt}\n"
+            f"🧠 Enhanced: {enhanced_prompt[:100]}...\n"
+            f"🖼️ Image: {image_filename} ({len(image_bytes)} bytes)\n"
+            f"🗿 3D Model: {model_filename}\n"
+            f"🆔 ID: {generation_id}\n"
+            f"🚀 Using discovered pipeline workflow!"
+        )
+        
+        return response
+        
+    except Exception as e:
+        logging.error(f"❌ Pipeline failed: {e}")
+        return execute_mock_mode(original_prompt, enhanced_prompt, ray)
