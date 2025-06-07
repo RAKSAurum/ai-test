@@ -482,3 +482,6 @@ class MemoryManager:
                 WHERE id = ?
             """, (time.time(), memory_id))
             conn.commit()
+
+    def _get_connection(self):
+        return sqlite3.connect(self.db_path)
