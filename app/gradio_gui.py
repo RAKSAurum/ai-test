@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import shutil
+import sqlite3
 import sys
 import time
 from pathlib import Path
@@ -26,6 +27,7 @@ if parent_dir not in sys.path:
 
 # Import memory system components
 from memory import MemoryManager, ConversationTracker, SemanticSearch
+from memory.semantic_search import SearchResult
 
 
 class AI3DGeneratorGUI:
@@ -80,8 +82,8 @@ class AI3DGeneratorGUI:
         self.conversation_tracker = ConversationTracker()
         self.semantic_search = SemanticSearch()
         
-        # Session management (local only)
-        self.current_user_id = "gradio_user"
+        # Session management (local only) - Use consistent user ID like Chainlit
+        self.current_user_id = "default"  # Changed to match Chainlit
         self.current_session_id = self.memory_manager.create_session(self.current_user_id)
         
         logging.info("🧠 Memory system initialized for Gradio GUI (local only)")
@@ -122,9 +124,7 @@ class AI3DGeneratorGUI:
     def search_memories(self, query: str, progress=gr.Progress()) -> tuple:
         """
         Search through memory using natural language queries with progress tracking.
-        
-        Processes natural language memory queries to find relevant past generations,
-        supporting temporal queries, entity-based searches, and general recall requests.
+        Enhanced to match Chainlit's robust memory handling logic.
         
         Args:
             query (str): Natural language query for searching memories.
@@ -135,76 +135,103 @@ class AI3DGeneratorGUI:
                 for displaying search results in the Gradio interface.
         """
         try:
-            progress(0.2, desc="Parsing memory query...")
+            progress(0.1, desc="🧠 Searching through your memories...")
+            print(f"DEBUG: Memory query from user {self.current_user_id}: '{query}'")
             
             # Parse the memory query using conversation tracker
             parsed_query = self.conversation_tracker.parse_memory_query(query)
+            print(f"DEBUG: Parsed query result: {parsed_query}")
             
             if not parsed_query['is_memory_query']:
+                debug_info = f"""Not recognized as memory query.
+                
+DEBUG INFO:
+- Query: '{query}'
+- Parsed: {parsed_query}
+- Try: 'show me my recent creations' or 'list my recent work'"""
                 return (
                     None,
                     None,
-                    "This doesn't appear to be a memory query. Try phrases like:\n"
-                    "- 'Show me what I created yesterday'\n"
-                    "- 'Find my robot creations'\n"
-                    "- 'List my recent work'",
+                    debug_info,
                     gr.update(visible=False),
                     gr.update(visible=False)
                 )
             
-            progress(0.5, desc="Searching memories...")
+            progress(0.3, desc="Building search parameters...")
             
-            # Build search parameters from parsed query
             search_query = self.conversation_tracker.build_search_query(parsed_query)
+            print(f"DEBUG: Search query: {search_query}")
             
-            # Perform search based on query type and available parameters
-            if search_query['time_range']:
-                # Temporal search for time-based queries
-                search_results = self.semantic_search.temporal_search(
-                    self.current_user_id, search_query['time_range'], limit=10
-                )
-            elif search_query['entity_filters'] or search_query['text_search']:
-                # Hybrid search for entity or text-based queries
-                search_results = self.semantic_search.hybrid_search(
-                    search_query['text_search'],
-                    self.current_user_id,
-                    search_query.get('time_range'),
-                    search_query.get('entity_filters'),
-                    limit=10
-                )
-            else:
-                # Recent memories fallback for general queries
-                recent_memories = self.memory_manager.get_recent_memories(
-                    self.current_user_id, limit=5
-                )
+            # Determine search strategy based on intent (matching Chainlit logic)
+            progress(0.5, desc="Executing search strategy...")
+            
+            if parsed_query['intent'] in ['recall', 'list']:
+                print("DEBUG: Using recent memories for recall/list intent")
+                recent_memories = self.memory_manager.get_recent_memories(self.current_user_id, limit=10)
                 search_results = [
-                    self.semantic_search.SearchResult(
+                    SearchResult(
                         memory_id=mem.id,
                         relevance_score=1.0,
                         match_type='recent',
                         matched_content=mem.original_prompt
                     ) for mem in recent_memories
                 ]
+            elif search_query['time_range']:
+                print("DEBUG: Using temporal search")
+                search_results = self.semantic_search.temporal_search(
+                    self.current_user_id, search_query['time_range'], limit=10
+                )
+            else:
+                print("DEBUG: Using hybrid search")
+                search_results = self.semantic_search.hybrid_search(
+                    search_query['text_search'], self.current_user_id, 
+                    search_query.get('time_range'), 
+                    search_query.get('entity_filters'), limit=10
+                )
+                
+                # If hybrid search returns nothing, fall back to recent memories
+                if not search_results:
+                    print("DEBUG: Hybrid search returned 0 results, falling back to recent memories")
+                    recent_memories = self.memory_manager.get_recent_memories(self.current_user_id, limit=5)
+                    search_results = [
+                        SearchResult(
+                            memory_id=mem.id,
+                            relevance_score=1.0,
+                            match_type='recent_fallback',
+                            matched_content=mem.original_prompt
+                        ) for mem in recent_memories
+                    ]
             
-            progress(0.8, desc="Formatting results...")
+            print(f"DEBUG: Search returned {len(search_results)} results")
             
+            progress(0.7, desc="Processing search results...")
+            
+            # Get full memory details and create response (matching Chainlit approach)
             if search_results:
-                # Get full memory details from search results
                 memories = []
-                for result in search_results:
-                    with self.memory_manager._get_connection() as conn:
-                        cursor = conn.execute("""
-                            SELECT * FROM memory_entries WHERE id = ?
-                        """, (result.memory_id,))
+                
+                for result in search_results[:5]:  # Limit to 5 results
+                    print(f"DEBUG: Processing result: {result.memory_id}")
+                    # Get memory from database using the same approach as Chainlit
+                    with sqlite3.connect(self.memory_manager.db_path) as conn:
+                        cursor = conn.execute("SELECT * FROM memory_entries WHERE id = ?", (result.memory_id,))
                         row = cursor.fetchone()
+                        
                         if row:
                             memory = self.memory_manager._row_to_memory_entry(row)
                             memories.append(memory)
+                            print(f"DEBUG: Found memory: {memory.original_prompt}")
+                        else:
+                            print(f"DEBUG: No database row found for memory_id: {result.memory_id}")
+                
+                progress(0.9, desc="Formatting response...")
                 
                 # Format response using conversation tracker
                 response_text = self.conversation_tracker.format_memory_response(
                     memories, parsed_query.get('intent', 'recall')
                 )
+                
+                print(f"DEBUG: Final response with {len(memories)} memories")
                 
                 # Get the most recent memory for display
                 if memories:
@@ -212,7 +239,12 @@ class AI3DGeneratorGUI:
                     display_image = latest_memory.image_path if latest_memory.image_path and os.path.exists(latest_memory.image_path) else None
                     display_model = latest_memory.model_path if latest_memory.model_path and os.path.exists(latest_memory.model_path) else None
                     
-                    progress(1.0, desc="Complete!")
+                    if display_image:
+                        print(f"DEBUG: Displaying image: {display_image}")
+                    if display_model:
+                        print(f"DEBUG: Displaying model: {display_model}")
+                    
+                    progress(1.0, desc="Memory search complete!")
                     
                     return (
                         display_image,
@@ -221,32 +253,76 @@ class AI3DGeneratorGUI:
                         gr.update(visible=bool(display_image)),
                         gr.update(visible=bool(display_model))
                     )
+                else:
+                    return (
+                        None,
+                        None,
+                        "🤔 Found search results but couldn't load memory details. Check console for debug info.",
+                        gr.update(visible=False),
+                        gr.update(visible=False)
+                    )
             
-            progress(1.0, desc="No results found")
-            
-            return (
-                None,
-                None,
-                "🤔 I couldn't find any memories matching your request. Try describing what you're looking for differently.",
-                gr.update(visible=False),
-                gr.update(visible=False)
-            )
+            else:
+                print("DEBUG: No search results found even after fallback")
+                return (
+                    None,
+                    None,
+                    "🤔 I couldn't find any memories. This shouldn't happen since you have memories stored. Check the console for debug info.",
+                    gr.update(visible=False),
+                    gr.update(visible=False)
+                )
             
         except Exception as e:
+            print(f"DEBUG: Memory query failed: {e}")
+            import traceback
+            traceback.print_exc()
             return (
                 None,
                 None,
-                f"❌ Memory search failed: {str(e)}",
+                f"❌ Memory search failed: {str(e)}\n\nDEBUG: Check console for details",
                 gr.update(visible=False),
                 gr.update(visible=False)
             )
 
+    def debug_memory_direct(self) -> str:
+        """
+        Direct memory test bypassing conversation tracker for debugging.
+        Similar to Chainlit's debug_memory_direct function.
+        
+        Returns:
+            str: Debug information about memory system state.
+        """
+        try:
+            print(f"DEBUG: Direct memory test for user: {self.current_user_id}")
+            recent_memories = self.memory_manager.get_recent_memories(self.current_user_id, limit=5)
+            
+            if recent_memories:
+                response_text = f"Found {len(recent_memories)} memories:\n\n"
+                
+                for i, memory in enumerate(recent_memories, 1):
+                    timestamp = time.strftime("%Y-%m-%d %H:%M", time.localtime(memory.timestamp))
+                    response_text += f"{i}. {memory.original_prompt} ({timestamp})\n"
+                    
+                    if memory.image_path and os.path.exists(memory.image_path):
+                        response_text += f"   └── Image: {memory.image_path}\n"
+                    
+                    if memory.model_path and os.path.exists(memory.model_path):
+                        response_text += f"   └── Model: {memory.model_path}\n"
+                
+                return response_text
+            else:
+                return f"No memories found for user: {self.current_user_id}"
+                
+        except Exception as e:
+            print(f"DEBUG: Direct memory test error: {e}")
+            import traceback
+            traceback.print_exc()
+            return f"Direct memory test failed: {str(e)}"
+
     def generate_3d_model(self, prompt: str, progress=gr.Progress()) -> tuple:
         """
         Generate 3D model through API with memory integration and progress tracking.
-        
-        Handles both generation requests and memory queries, enhances prompts using
-        memory context, calls the AI API, and stores results in the memory system.
+        Enhanced to properly handle memory queries like Chainlit version.
         
         Args:
             prompt (str): User input prompt for generation or memory query.
@@ -257,34 +333,34 @@ class AI3DGeneratorGUI:
                 for displaying results in the Gradio interface.
         """
         try:
-            progress(0.1, desc="Starting generation...")
+            progress(0.1, desc="Analyzing input...")
             
-            # Check if this is a memory query first (handle locally)
+            # Parse input to determine if it's a memory query (matching Chainlit logic)
             parsed_query = self.conversation_tracker.parse_memory_query(prompt)
+            print(f"DEBUG: Input '{prompt}' parsed as: {parsed_query}")
+            
             if parsed_query['is_memory_query'] and parsed_query['intent'] in ['recall', 'list']:
+                print("DEBUG: Routing to memory query handler")
                 return self.search_memories(prompt, progress)
             
+            # Continue with generation logic
             progress(0.2, desc="Getting memory context...")
             
-            # Get memory context for prompt enhancement (local only)
+            # Get memory context for prompt enhancement (matching Chainlit approach)
             memory_context = []
             enhanced_prompt = prompt  # Default to original prompt
             
-            if parsed_query['intent'] == 'create_similar':
-                # Search for similar past creations for context
-                search_results = self.semantic_search.semantic_search(
-                    prompt, self.current_user_id, limit=3
+            # Build memory context for enhanced generation
+            search_results = self.semantic_search.semantic_search(prompt, self.current_user_id, limit=3)
+            for result in search_results:
+                memories = self.memory_manager.search_memories(
+                    result.matched_content, self.current_user_id, limit=1
                 )
-                for result in search_results:
-                    memories = self.memory_manager.search_memories(
-                        result.matched_content, self.current_user_id, limit=1
-                    )
-                    memory_context.extend(memories)
-                
-                # Enhance prompt locally using memory context
-                if memory_context:
-                    context_prompts = [mem.original_prompt for mem in memory_context[:2]]
-                    enhanced_prompt = f"{prompt} (inspired by: {', '.join(context_prompts)})"
+                memory_context.extend(memories)
+            
+            if memory_context:
+                context_prompts = [mem.original_prompt for mem in memory_context[:2]]
+                enhanced_prompt = f"{prompt} (inspired by: {', '.join(context_prompts)})"
             
             progress(0.3, desc="Calling AI pipeline...")
             
@@ -297,7 +373,7 @@ class AI3DGeneratorGUI:
             response = requests.post(
                 f"{self.api_url}/execution",
                 json=api_payload,
-                timeout=120
+                timeout=300  # Match Chainlit timeout
             )
             
             progress(0.8, desc="Processing results...")
@@ -331,15 +407,15 @@ class AI3DGeneratorGUI:
                     latest_model = max(model_files, key=os.path.getctime)
                     self.latest_model_path = latest_model
                 
-                # Store generation in memory (completely local)
+                # Store generation in memory (completely local) - matching Chainlit metadata
                 try:
                     memory_metadata = {
                         'generation_time': time.time(),
-                        'api_response': message,
+                        'processing_time': time.time() - time.time(),  # Will be updated
+                        'reference_memory_id': None,
                         'memory_context_used': len(memory_context) > 0,
-                        'interface': 'gradio',
-                        'enhanced_prompt': enhanced_prompt,
-                        'original_prompt': prompt
+                        'api_response': message,
+                        'interface': 'gradio'
                     }
                     
                     memory_id = self.memory_manager.store_generation(
@@ -357,9 +433,13 @@ class AI3DGeneratorGUI:
                         memory_id, f"{prompt} {enhanced_prompt}"
                     )
                     
+                    print(f"DEBUG: Stored memory with ID: {memory_id}")
                     logging.info(f"💾 Stored generation in memory: {memory_id}")
                     
                 except Exception as e:
+                    print(f"Failed to store in memory: {e}")
+                    import traceback
+                    traceback.print_exc()
                     logging.error(f"Failed to store in memory: {e}")
                 
                 # Copy files for download
@@ -368,18 +448,24 @@ class AI3DGeneratorGUI:
                 
                 progress(1.0, desc="Complete!")
                 
-                # Enhanced status message with memory info
-                status_message = f"""✓ {message}
+                # Enhanced status message with memory info (matching Chainlit style)
+                status_message = f"""✅ Generation Complete!
 
-💾 **Memory:** Generation stored for future recall
-🧠 **Context:** {len(memory_context)} relevant memories used
-📁 **Files:** {download_text}
+**Prompt:** "{prompt}"
+**Memory Context:** {len(memory_context)} relevant memories used
+
+**Generated Files:**
+{download_text}
+
+**💾 Memory:** This creation has been stored and can be recalled using natural language queries!
 
 **Memory Commands:**
 - "Show me what I created yesterday"
 - "Find my robot creations"  
 - "Create something like my last dragon"
-- "List my recent work\""""
+- "List my recent work"
+
+**Downloads Location:** `{os.path.abspath(self.downloads_dir)}`"""
                 
                 # Return results for Gradio interface
                 return (
@@ -393,16 +479,24 @@ class AI3DGeneratorGUI:
                 return (
                     None,
                     None,
-                    f"Error: HTTP {response.status_code}\nResponse: {response.text[:200]}",
+                    f"❌ Generation Failed\n\n**Error:** HTTP {response.status_code}\n**Response:** {response.text[:200]}\n\n**Your API is running but returned an error. Check the server logs.**",
                     gr.update(visible=False),
                     gr.update(visible=False)
                 )
                 
+        except requests.exceptions.ConnectionError:
+            return (
+                None,
+                None,
+                f"❌ Connection Failed\n\n**Error:** Cannot connect to API server at {self.api_url}\n\n**Please check:**\n1. Is your API server running?\n2. Try: `python main.py` to start the server",
+                gr.update(visible=False),
+                gr.update(visible=False)
+            )
         except requests.exceptions.Timeout:
             return (
                 None,
                 None,
-                "Error: Request timed out (>2 minutes)",
+                "❌ Request timed out (>5 minutes)",
                 gr.update(visible=False),
                 gr.update(visible=False)
             )
@@ -410,7 +504,7 @@ class AI3DGeneratorGUI:
             return (
                 None,
                 None,
-                f"Error: {str(e)}",
+                f"❌ Generation Failed\n\n**Error:** {str(e)}\n\n**Memory Commands still work:**\n- \"Show me my recent creations\"\n- \"Find my robot from yesterday\"",
                 gr.update(visible=False),
                 gr.update(visible=False)
             )
@@ -418,9 +512,7 @@ class AI3DGeneratorGUI:
     def get_recent_memories(self) -> str:
         """
         Get recent memories for display in the interface.
-        
-        Retrieves and formats recent memory entries for display in the
-        memory section of the Gradio interface.
+        Enhanced with better error handling and debug info.
         
         Returns:
             str: Formatted string containing recent memory information.
@@ -436,11 +528,17 @@ class AI3DGeneratorGUI:
                     timestamp = time.strftime("%Y-%m-%d %H:%M", time.localtime(memory.timestamp))
                     memory_text += f"{i}. {memory.original_prompt} ({timestamp})\n"
                 
+                memory_text += f"\n**Total memories for user {self.current_user_id}: {len(recent_memories)}**"
                 return memory_text
             else:
-                return "No recent memories found. Create something to get started!"
+                # Debug info when no memories found
+                debug_info = self.debug_memory_direct()
+                return f"No recent memories found. Create something to get started!\n\n**Debug Info:**\n{debug_info}"
                 
         except Exception as e:
+            print(f"Error loading memories: {e}")
+            import traceback
+            traceback.print_exc()
             return f"Error loading memories: {str(e)}"
 
     def create_similar_to_last(self) -> str:
@@ -484,7 +582,7 @@ class AI3DGeneratorGUI:
             "",  # prompt
             None,  # generated_image
             None,  # model_3d
-            "Click Generate to start or use memory commands like 'show me my recent creations'",  # status_text
+            "🚀 Ready! Generate 3D models or search your memories using natural language.\n\n💡 Try: 'show me what I created yesterday' or 'create a robot'",  # status_text
             gr.update(visible=False),  # image_section
             gr.update(visible=False)   # model_section
         )
