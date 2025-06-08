@@ -5,7 +5,7 @@ description = "An application for demonstrating your skills in AI"
 authors = ["Rockstar"]
 
 [tool.poetry.dependencies]
-python = ">=3.9,<4.0"
+python = ">=3.10,<4.0"
 
 # Core Openfabric SDK
 openfabric-pysdk = "^0.2.9"
@@ -32,6 +32,7 @@ typing-extensions = "^4.5.0"
 
 # GUI Dependencies
 gradio = { version = "^3.50.0" }
+chainlit = "^2.5.5"
 
 # Memory System Dependencies (Required for semantic search)
 faiss-cpu = "^1.7.4"
