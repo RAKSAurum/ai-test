@@ -1,19 +1,27 @@
-import chainlit as cl
-import os
-import time
-import shutil
-import requests
+"""
+AI 3D Generator with Memory Integration
+
+A Chainlit-based application that provides AI-powered 3D model generation
+with intelligent memory management and natural language query capabilities.
+"""
+
 import json
+import os
+import shutil
 import sqlite3
+import sys
+import time
+from typing import Optional
+
+import chainlit as cl
+import requests
 
 # Add path for memory imports
-import sys
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
-# FIXED: Import SearchResult class directly
 from memory import MemoryManager, ConversationTracker, SemanticSearch
 from memory.semantic_search import SearchResult
 
@@ -29,9 +37,23 @@ semantic_search = SemanticSearch()
 # Global session tracking
 user_sessions = {}
 
-# Synchronous API call function to be wrapped with cl.make_async
-def call_api_sync(prompt):
-    """Synchronous API call function to be wrapped with cl.make_async"""
+
+def call_api_sync(prompt: str) -> requests.Response:
+    """
+    Synchronous API call function for 3D model generation.
+    
+    Makes a POST request to the local API server for 3D model generation
+    with the provided prompt text.
+    
+    Args:
+        prompt (str): Text prompt for 3D model generation.
+        
+    Returns:
+        requests.Response: HTTP response from the generation API.
+        
+    Raises:
+        requests.exceptions.RequestException: If the API call fails.
+    """
     api_payload = {"prompt": prompt}
     
     response = requests.post(
@@ -42,8 +64,17 @@ def call_api_sync(prompt):
     
     return response
 
-async def debug_memory():
-    """Debug function to test memory directly"""
+
+async def debug_memory() -> list:
+    """
+    Debug function to test memory system functionality directly.
+    
+    Performs comprehensive testing of the memory system including
+    database connections, recent memory retrieval, and conversation tracking.
+    
+    Returns:
+        list: List of recent memory entries for debugging purposes.
+    """
     user_id = cl.user_session.get("user_id", "default")
     
     try:
@@ -57,7 +88,7 @@ async def debug_memory():
         for i, memory in enumerate(recent_memories):
             print(f"DEBUG Memory {i}: {memory.original_prompt} (ID: {memory.id})")
         
-        # Test 2: Check database connection - FIXED
+        # Test 2: Check database connection
         with sqlite3.connect(memory_manager.db_path) as conn:
             cursor = conn.execute("SELECT COUNT(*) FROM memory_entries WHERE user_id = ?", (user_id,))
             count = cursor.fetchone()[0]
@@ -80,11 +111,17 @@ async def debug_memory():
         traceback.print_exc()
         return []
 
+
 @cl.on_chat_start
-async def start():
-    """Initialize chat with welcome message, memory system, and quick action examples."""
-    # FIXED: Use consistent user ID
-    user_id = "default"  # Use consistent user ID instead of random session ID
+async def start() -> None:
+    """
+    Initialize chat session with welcome message and memory system setup.
+    
+    Creates a new user session, initializes the memory system, and displays
+    a welcome message with recent creations and quick action buttons.
+    """
+    # Use consistent user ID instead of random session ID
+    user_id = "default"
     session_id = memory_manager.create_session(user_id)
     
     print(f"DEBUG: Starting session for user_id: {user_id}, session_id: {session_id}")
@@ -164,34 +201,45 @@ Just describe what you want to create!"""
         actions=actions
     ).send()
 
+
 @cl.action_callback("robot")
-async def on_action_robot(action):
+async def on_action_robot(action) -> None:
     """Handle robot example action callback."""
     await handle_generation(action.payload["prompt"])
 
+
 @cl.action_callback("castle")
-async def on_action_castle(action):
+async def on_action_castle(action) -> None:
     """Handle castle example action callback."""
     await handle_generation(action.payload["prompt"])
 
+
 @cl.action_callback("dragon")
-async def on_action_dragon(action):
+async def on_action_dragon(action) -> None:
     """Handle dragon example action callback."""
     await handle_generation(action.payload["prompt"])
 
+
 @cl.action_callback("memory_search")
-async def on_action_memory_search(action):
+async def on_action_memory_search(action) -> None:
     """Handle memory search action callback."""
     await handle_memory_query(action.payload["prompt"])
 
+
 @cl.action_callback("similar_creation")
-async def on_action_similar_creation(action):
+async def on_action_similar_creation(action) -> None:
     """Handle similar creation action callback."""
     await handle_generation(action.payload["prompt"])
 
+
 @cl.action_callback("debug_memory_direct")
-async def debug_memory_direct(action):
-    """Direct memory test bypassing conversation tracker"""
+async def debug_memory_direct(action) -> None:
+    """
+    Direct memory test bypassing conversation tracker for debugging.
+    
+    Performs direct memory system testing and displays results with
+    associated images and 3D model files if available.
+    """
     user_id = cl.user_session.get("user_id", "default")
     
     try:
@@ -222,9 +270,18 @@ async def debug_memory_direct(action):
         import traceback
         traceback.print_exc()
 
+
 @cl.on_message
-async def main(message: cl.Message):
-    """Main message handler for user input with memory integration."""
+async def main(message: cl.Message) -> None:
+    """
+    Main message handler for user input with memory integration.
+    
+    Analyzes user input to determine if it's a memory query or generation request
+    and routes to the appropriate handler function.
+    
+    Args:
+        message (cl.Message): Incoming user message to process.
+    """
     user_input = message.content
     
     # Parse input to determine if it's a memory query
@@ -236,8 +293,17 @@ async def main(message: cl.Message):
     else:
         await handle_generation(user_input)
 
-async def handle_memory_query(query: str):
-    """Handle memory-related queries with debugging - FIXED VERSION"""
+
+async def handle_memory_query(query: str) -> None:
+    """
+    Handle memory-related queries with comprehensive search and display.
+    
+    Processes natural language memory queries, searches through stored memories,
+    and displays results with associated images and 3D models.
+    
+    Args:
+        query (str): Natural language memory query to process.
+    """
     user_id = cl.user_session.get("user_id", "default")
     print(f"DEBUG: Memory query from user {user_id}: '{query}'")
     
@@ -263,12 +329,12 @@ DEBUG INFO:
         search_query = conversation_tracker.build_search_query(parsed_query)
         print(f"DEBUG: Search query: {search_query}")
         
-        # FIXED: Use SearchResult class correctly
+        # Determine search strategy based on intent
         if parsed_query['intent'] in ['recall', 'list']:
             print("DEBUG: Using recent memories for recall/list intent")
             recent_memories = memory_manager.get_recent_memories(user_id, limit=10)
             search_results = [
-                SearchResult(  # FIXED: Use imported SearchResult class
+                SearchResult(
                     memory_id=mem.id,
                     relevance_score=1.0,
                     match_type='recent',
@@ -285,12 +351,12 @@ DEBUG INFO:
                 search_query.get('entity_filters'), limit=10
             )
             
-            # FIXED: If hybrid search returns nothing, fall back to recent memories
+            # If hybrid search returns nothing, fall back to recent memories
             if not search_results:
                 print("DEBUG: Hybrid search returned 0 results, falling back to recent memories")
                 recent_memories = memory_manager.get_recent_memories(user_id, limit=5)
                 search_results = [
-                    SearchResult(  # FIXED: Use imported SearchResult class
+                    SearchResult(
                         memory_id=mem.id,
                         relevance_score=1.0,
                         match_type='recent_fallback',
@@ -354,14 +420,35 @@ DEBUG INFO:
         processing_msg.content = f"❌ Memory search failed: {str(e)}\n\nDEBUG: Check console for details"
         await processing_msg.update()
 
+
 @cl.action_callback("create_similar_to_memory")
-async def on_create_similar_to_memory(action):
+async def on_create_similar_to_memory(action) -> None:
+    """
+    Handle creation of similar content based on existing memory.
+    
+    Creates a variation prompt based on an existing memory entry and
+    initiates the generation process with memory context.
+    """
     memory_id = action.payload["memory_id"]
     original_prompt = action.payload["prompt"]
     variation_prompt = f"Create a variation of: {original_prompt}"
     await handle_generation(variation_prompt, reference_memory_id=memory_id)
 
-def copy_file_safely(src, dest):
+
+def copy_file_safely(src: str, dest: str) -> Optional[str]:
+    """
+    Safely copy a file from source to destination with error handling.
+    
+    Creates destination directory if needed and handles file copying
+    with proper error handling and resource management.
+    
+    Args:
+        src (str): Source file path to copy from.
+        dest (str): Destination file path to copy to.
+        
+    Returns:
+        Optional[str]: Destination path if successful, None if failed.
+    """
     try:
         if src and os.path.exists(src):
             os.makedirs(os.path.dirname(dest), exist_ok=True)
@@ -373,7 +460,20 @@ def copy_file_safely(src, dest):
         print(f"Error copying file {src} to {dest}: {e}")
     return None
 
-def get_proper_extension(file_path):
+
+def get_proper_extension(file_path: str) -> str:
+    """
+    Determine the proper file extension for 3D model files.
+    
+    Analyzes file headers and content to determine if the file is
+    GLB (binary) or GLTF (text) format for proper file handling.
+    
+    Args:
+        file_path (str): Path to the 3D model file to analyze.
+        
+    Returns:
+        str: Proper file extension ('.glb' or '.gltf').
+    """
     try:
         with open(file_path, 'rb') as f:
             header = f.read(12)
@@ -391,7 +491,18 @@ def get_proper_extension(file_path):
     except Exception:
         return '.gltf'
 
-async def handle_generation(prompt: str, reference_memory_id: str = None):
+
+async def handle_generation(prompt: str, reference_memory_id: Optional[str] = None) -> None:
+    """
+    Handle 3D model generation with memory integration and file management.
+    
+    Processes generation requests by analyzing memory context, calling the API,
+    managing generated files, and storing results in the memory system.
+    
+    Args:
+        prompt (str): Text prompt for 3D model generation.
+        reference_memory_id (Optional[str]): Optional reference to existing memory for variations.
+    """
     start_time = time.time()
     user_id = cl.user_session.get("user_id", "default")
     session_id = cl.user_session.get("session_id")
@@ -409,6 +520,7 @@ async def handle_generation(prompt: str, reference_memory_id: str = None):
         memory_context = []
         enhanced_prompt = prompt
         
+        # Build memory context for enhanced generation
         if reference_memory_id:
             with sqlite3.connect(memory_manager.db_path) as conn:
                 cursor = conn.execute("SELECT * FROM memory_entries WHERE id = ?", (reference_memory_id,))
@@ -444,6 +556,7 @@ async def handle_generation(prompt: str, reference_memory_id: str = None):
             result = response.json()
             message = result.get("message", "Generation completed")
             
+            # Find generated files
             image_files = []
             model_files = []
             
@@ -461,6 +574,7 @@ async def handle_generation(prompt: str, reference_memory_id: str = None):
             download_info = []
             timestamp = int(time.time())
             
+            # Process image file
             image_path = None
             if latest_image and os.path.exists(latest_image):
                 ext = os.path.splitext(latest_image)[1] or '.png'
@@ -471,6 +585,7 @@ async def handle_generation(prompt: str, reference_memory_id: str = None):
                     elements.append(cl.Image(name=image_filename, path=image_path, display="inline", size="large"))
                     download_info.append(f"🖼️ **Image:** `{image_filename}`")
             
+            # Process 3D model file
             model_path = None
             if latest_model and os.path.exists(latest_model):
                 proper_ext = get_proper_extension(latest_model)
@@ -486,6 +601,7 @@ async def handle_generation(prompt: str, reference_memory_id: str = None):
                     download_info.append(f"   └── Size: {file_size:,} bytes")
                     download_info.append(f"   └── Format: {proper_ext.upper()}")
             
+            # Store in memory system
             try:
                 memory_metadata = {
                     'generation_time': time.time(),
@@ -565,17 +681,24 @@ async def handle_generation(prompt: str, reference_memory_id: str = None):
 - "Find my robot from yesterday\""""
         await processing_msg.update()
 
+
 @cl.action_callback("generate_another")
-async def generate_another(action):
+async def generate_another(action) -> None:
+    """Handle generate another action callback."""
     await cl.Message(content="Great! Just type your new description and I'll generate another 3D model for you. 🎨").send()
 
+
 @cl.action_callback("create_variation")
-async def create_variation(action):
+async def create_variation(action) -> None:
+    """Handle create variation action callback."""
     await handle_generation(action.payload["prompt"])
 
+
 @cl.action_callback("view_memories")
-async def view_memories(action):
+async def view_memories(action) -> None:
+    """Handle view memories action callback."""
     await handle_memory_query(action.payload["prompt"])
+
 
 if __name__ == "__main__":
     cl.run()

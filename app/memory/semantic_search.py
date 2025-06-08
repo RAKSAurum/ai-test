@@ -2,58 +2,102 @@
 Semantic Search and Natural Language Processing
 
 Provides advanced search capabilities using vector embeddings and
-natural language understanding for memory queries.
+natural language understanding for memory queries in AI applications.
 """
 
-import numpy as np
-import sqlite3
 import json
-import time
-from typing import List, Dict, Any, Optional, Tuple
-from dataclasses import dataclass
 import logging
 import re
+import sqlite3
+import time
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+import numpy as np
 
 # Global flag for embeddings availability - define at module level
 EMBEDDINGS_AVAILABLE = False
 
 try:
-    from sentence_transformers import SentenceTransformer
     import faiss
+    from sentence_transformers import SentenceTransformer
+    
     EMBEDDINGS_AVAILABLE = True
     logging.info("✅ Sentence transformers and FAISS available")
 except ImportError as e:
     EMBEDDINGS_AVAILABLE = False
     logging.warning(f"⚠️ Sentence transformers not available: {e}. Using fallback search.")
 
+
 @dataclass
 class SearchResult:
-    """Represents a search result with relevance scoring."""
+    """
+    Represents a search result with relevance scoring and metadata.
+    
+    This class encapsulates the information returned from semantic or keyword
+    searches, including relevance metrics and match type information for
+    result ranking and display purposes.
+    
+    Attributes:
+        memory_id (str): Unique identifier for the memory entry.
+        relevance_score (float): Calculated relevance score (0.0-1.0).
+        match_type (str): Type of match ('semantic', 'keyword', 'temporal').
+        matched_content (str): The content that matched the search query.
+    """
     memory_id: str
     relevance_score: float
     match_type: str  # 'semantic', 'keyword', 'temporal'
     matched_content: str
 
+
 class SemanticSearch:
     """
-    Advanced semantic search system for memory queries.
+    Advanced semantic search system for AI memory queries.
     
-    Provides vector-based similarity search with fallback to keyword matching
-    when embedding models are not available.
+    Provides comprehensive search capabilities using vector-based similarity search
+    with intelligent fallback to keyword matching when embedding models are not available.
+    This system is designed to work seamlessly with AI 3D generation workflows and
+    memory management systems.
+    
+    The search system supports multiple search modes:
+    - Semantic search using sentence transformers and FAISS indexing
+    - Keyword-based fallback search with relevance scoring
+    - Temporal search for time-based queries
+    - Hybrid search combining multiple approaches
+    - Entity filtering for refined results
+    
+    Attributes:
+        db_path (Path): Path to the memory database file.
+        model (Optional[SentenceTransformer]): Loaded sentence transformer model.
+        index (Optional[faiss.Index]): FAISS vector index for similarity search.
+        memory_vectors (Dict[str, int]): Mapping of memory IDs to vector indices.
+        embedding_dim (int): Dimensionality of embedding vectors.
+        embeddings_available (bool): Flag indicating if embeddings are available.
+    
+    Example:
+        >>> search = SemanticSearch("memory/ai_memory.db")
+        >>> results = search.semantic_search("robot with wings", "user123")
+        >>> hybrid_results = search.hybrid_search("futuristic car", "user123", limit=5)
     """
 
-    def __init__(self, db_path: str = "memory/ai_memory.db"):
+    def __init__(self, db_path: str = "memory/ai_memory.db") -> None:
         """
-        Initialize semantic search system.
+        Initialize semantic search system with embedding models and vector index.
+        
+        Sets up the search system with sentence transformers for embeddings,
+        FAISS for vector similarity search, and database connections for
+        persistent storage and retrieval.
         
         Args:
-            db_path: Path to the memory database
+            db_path (str): Path to the memory database. Defaults to "memory/ai_memory.db".
         """
         self.db_path = Path(db_path)
         self.model = None
         self.index = None
         self.memory_vectors = {}
+        self.embedding_dim = 384  # Default for all-MiniLM-L6-v2
+        self.embeddings_available = EMBEDDINGS_AVAILABLE
         
         # Initialize embedding model if available
         if EMBEDDINGS_AVAILABLE:
@@ -64,19 +108,21 @@ class SemanticSearch:
                 logging.info("🔍 Semantic search initialized with embeddings")
             except Exception as e:
                 logging.warning(f"⚠️ Failed to load embedding model: {e}")
-                # Don't modify global variable, just set instance flag
                 self.embeddings_available = False
-        else:
-            self.embeddings_available = False
         
-        if not EMBEDDINGS_AVAILABLE:
+        if not self.embeddings_available:
             logging.info("🔍 Semantic search initialized with keyword fallback")
 
-    def _initialize_vector_index(self):
-        """Initialize FAISS vector index for similarity search."""
+    def _initialize_vector_index(self) -> None:
+        """
+        Initialize FAISS vector index for efficient similarity search.
+        
+        Creates a FAISS index optimized for cosine similarity and loads
+        existing embeddings from the database to maintain search continuity.
+        """
         try:
-            # Create FAISS index
-            self.index = faiss.IndexFlatIP(self.embedding_dim)  # Inner product for cosine similarity
+            # Create FAISS index for inner product (cosine similarity)
+            self.index = faiss.IndexFlatIP(self.embedding_dim)
             
             # Load existing embeddings from database
             self._load_existing_embeddings()
@@ -85,8 +131,13 @@ class SemanticSearch:
             logging.error(f"❌ Failed to initialize vector index: {e}")
             self.index = None
 
-    def _load_existing_embeddings(self):
-        """Load existing memory embeddings from database."""
+    def _load_existing_embeddings(self) -> None:
+        """
+        Load existing memory embeddings from database into FAISS index.
+        
+        Retrieves previously computed embeddings from the database and
+        rebuilds the FAISS index for immediate search availability.
+        """
         if not self.db_path.exists():
             return
         
@@ -135,15 +186,18 @@ class SemanticSearch:
         except Exception as e:
             logging.error(f"❌ Failed to load existing embeddings: {e}")
 
-    def add_memory_embedding(self, memory_id: str, text_content: str):
+    def add_memory_embedding(self, memory_id: str, text_content: str) -> None:
         """
-        Add embedding for a new memory entry.
+        Add embedding for a new memory entry to enable semantic search.
+        
+        Generates vector embeddings for new memory content and adds them
+        to both the FAISS index and persistent database storage.
         
         Args:
-            memory_id: Unique memory identifier
-            text_content: Text content to embed
+            memory_id (str): Unique memory identifier.
+            text_content (str): Text content to embed and index.
         """
-        if not EMBEDDINGS_AVAILABLE or not self.model:
+        if not self.embeddings_available or not self.model:
             return
         
         try:
@@ -166,8 +220,14 @@ class SemanticSearch:
         except Exception as e:
             logging.error(f"❌ Failed to add embedding for {memory_id}: {e}")
 
-    def _store_embedding(self, memory_id: str, embedding: np.ndarray):
-        """Store embedding in database."""
+    def _store_embedding(self, memory_id: str, embedding: np.ndarray) -> None:
+        """
+        Store embedding in persistent database storage.
+        
+        Args:
+            memory_id (str): Memory identifier for the embedding.
+            embedding (np.ndarray): Normalized embedding vector to store.
+        """
         try:
             with sqlite3.connect(self.db_path) as conn:
                 conn.execute("""
@@ -181,18 +241,22 @@ class SemanticSearch:
     def semantic_search(self, query: str, user_id: str = "default", 
                        limit: int = 10, threshold: float = 0.3) -> List[SearchResult]:
         """
-        Perform semantic search using vector embeddings.
+        Perform semantic search using vector embeddings and similarity matching.
+        
+        Converts the query to an embedding vector and searches for the most
+        similar memory entries using cosine similarity in the FAISS index.
+        Falls back to keyword search if embeddings are unavailable.
         
         Args:
-            query: Search query text
-            user_id: User identifier for filtering
-            limit: Maximum number of results
-            threshold: Minimum similarity threshold
+            query (str): Search query text to find similar memories.
+            user_id (str): User identifier for filtering results. Defaults to "default".
+            limit (int): Maximum number of results to return. Defaults to 10.
+            threshold (float): Minimum similarity threshold (0.0-1.0). Defaults to 0.3.
             
         Returns:
-            List[SearchResult]: Ranked search results
+            List[SearchResult]: Ranked search results sorted by relevance score.
         """
-        if not EMBEDDINGS_AVAILABLE or not self.model or not self.index:
+        if not self.embeddings_available or not self.model or not self.index:
             return self._fallback_keyword_search(query, user_id, limit)
         
         try:
@@ -245,13 +309,16 @@ class SemanticSearch:
         """
         Fallback keyword-based search when embeddings are unavailable.
         
+        Performs text-based matching using SQL LIKE queries and calculates
+        relevance scores based on keyword matches and memory quality metrics.
+        
         Args:
-            query: Search query text
-            user_id: User identifier
-            limit: Maximum number of results
+            query (str): Search query text for keyword matching.
+            user_id (str): User identifier for filtering. Defaults to "default".
+            limit (int): Maximum number of results to return. Defaults to 10.
             
         Returns:
-            List[SearchResult]: Keyword-based search results
+            List[SearchResult]: Keyword-based search results with relevance scores.
         """
         try:
             query_terms = self._extract_keywords(query)
@@ -261,7 +328,7 @@ class SemanticSearch:
             results = []
             
             with sqlite3.connect(self.db_path) as conn:
-                # Build search query
+                # Build search query with dynamic conditions
                 search_conditions = []
                 params = [user_id]
                 
@@ -290,7 +357,9 @@ class SemanticSearch:
                     memory_id, original_prompt, enhanced_prompt, tags, relevance = row
                     
                     # Calculate keyword match score
-                    match_score = self._calculate_keyword_score(query_terms, original_prompt, enhanced_prompt, tags)
+                    match_score = self._calculate_keyword_score(
+                        query_terms, original_prompt, enhanced_prompt, tags
+                    )
                     
                     results.append(SearchResult(
                         memory_id=memory_id,
@@ -308,15 +377,18 @@ class SemanticSearch:
     def temporal_search(self, user_id: str, time_range: Tuple[float, float], 
                        limit: int = 10) -> List[SearchResult]:
         """
-        Search memories within a specific time range.
+        Search memories within a specific time range with recency scoring.
+        
+        Retrieves memories created within the specified time window and
+        calculates relevance scores based on recency and quality metrics.
         
         Args:
-            user_id: User identifier
-            time_range: Tuple of (start_time, end_time) timestamps
-            limit: Maximum number of results
+            user_id (str): User identifier for filtering results.
+            time_range (Tuple[float, float]): Tuple of (start_time, end_time) timestamps.
+            limit (int): Maximum number of results to return. Defaults to 10.
             
         Returns:
-            List[SearchResult]: Time-filtered results
+            List[SearchResult]: Time-filtered results sorted by combined relevance score.
         """
         try:
             start_time, end_time = time_range
@@ -358,15 +430,18 @@ class SemanticSearch:
         """
         Perform hybrid search combining semantic, temporal, and entity filtering.
         
+        Combines multiple search approaches to provide comprehensive results
+        that match both semantic similarity and specified constraints.
+        
         Args:
-            query: Search query text
-            user_id: User identifier
-            time_range: Optional time range filter
-            entity_filters: Optional entity-based filters
-            limit: Maximum number of results
+            query (str): Search query text for semantic/keyword matching.
+            user_id (str): User identifier for filtering. Defaults to "default".
+            time_range (Optional[Tuple[float, float]]): Optional time range filter.
+            entity_filters (Optional[Dict[str, List[str]]]): Optional entity-based filters.
+            limit (int): Maximum number of results to return. Defaults to 10.
             
         Returns:
-            List[SearchResult]: Combined search results
+            List[SearchResult]: Combined search results with merged relevance scores.
         """
         all_results = []
         
@@ -406,7 +481,20 @@ class SemanticSearch:
     def _apply_entity_filters(self, results: List[SearchResult], 
                              entity_filters: Dict[str, List[str]], 
                              user_id: str) -> List[SearchResult]:
-        """Apply entity-based filtering to search results."""
+        """
+        Apply entity-based filtering to search results.
+        
+        Filters search results based on entity matches in prompts and tags
+        to provide more targeted results for specific categories or attributes.
+        
+        Args:
+            results (List[SearchResult]): Search results to filter.
+            entity_filters (Dict[str, List[str]]): Entity filters to apply.
+            user_id (str): User identifier for database queries.
+            
+        Returns:
+            List[SearchResult]: Filtered results matching entity criteria.
+        """
         if not entity_filters:
             return results
         
@@ -455,11 +543,22 @@ class SemanticSearch:
         return filtered_results
 
     def _extract_keywords(self, text: str) -> List[str]:
-        """Extract meaningful keywords from text."""
+        """
+        Extract meaningful keywords from text by removing stop words.
+        
+        Processes input text to identify significant terms for keyword-based
+        search while filtering out common stop words and short terms.
+        
+        Args:
+            text (str): Input text to process for keywords.
+            
+        Returns:
+            List[str]: List of meaningful search terms (limited to 10).
+        """
         # Remove punctuation and split
         words = re.findall(r'\b\w+\b', text.lower())
         
-        # Remove common stop words
+        # Comprehensive stop words list for better search term extraction
         stop_words = {
             'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
             'of', 'with', 'by', 'from', 'up', 'about', 'into', 'through', 'during',
@@ -471,11 +570,26 @@ class SemanticSearch:
         }
         
         keywords = [word for word in words if word not in stop_words and len(word) > 2]
-        return keywords[:10]  # Limit to 10 keywords
+        return keywords[:10]  # Limit to 10 keywords for performance
 
     def _calculate_keyword_score(self, query_terms: List[str], original_prompt: str, 
                                 enhanced_prompt: str, tags_json: str) -> float:
-        """Calculate relevance score for keyword matching."""
+        """
+        Calculate relevance score for keyword matching with weighted scoring.
+        
+        Computes relevance based on where keywords appear (original prompt
+        weighted highest, enhanced prompt medium, tags lowest) and normalizes
+        the score based on total query terms.
+        
+        Args:
+            query_terms (List[str]): List of search terms to match.
+            original_prompt (str): Original user prompt text.
+            enhanced_prompt (str): Enhanced prompt text.
+            tags_json (str): JSON string of tags.
+            
+        Returns:
+            float: Normalized relevance score (0.0-1.0).
+        """
         try:
             combined_text = f"{original_prompt} {enhanced_prompt}".lower()
             
@@ -492,7 +606,7 @@ class SemanticSearch:
             for term in query_terms:
                 term_lower = term.lower()
                 
-                # Score based on where the term appears
+                # Score based on where the term appears (weighted scoring)
                 if term_lower in original_prompt.lower():
                     score += 1.0  # Highest weight for original prompt
                 elif term_lower in enhanced_prompt.lower():

@@ -5,25 +5,48 @@ Handles both short-term and long-term memory storage, retrieval,
 and management for the AI 3D Generator pipeline.
 """
 
-import sqlite3
-import json
-import uuid
-import time
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any, Tuple
-from dataclasses import dataclass, asdict
-from pathlib import Path
-import logging
 import hashlib
+import json
+import logging
+import sqlite3
+import time
+import uuid
+from dataclasses import asdict, dataclass
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
 
 @dataclass
 class MemoryEntry:
-    """Represents a single memory entry in the system."""
+    """
+    Represents a single memory entry in the system.
+    
+    This class encapsulates all information related to a memory entry including
+    generation data, file paths, metadata, and access tracking information.
+    
+    Attributes:
+        id (str): Unique identifier for the memory entry.
+        session_id (str): Session identifier this memory belongs to.
+        user_id (str): User identifier who created this memory.
+        timestamp (float): Unix timestamp when memory was created.
+        memory_type (str): Type of memory ('generation', 'conversation', 'preference').
+        original_prompt (str): Original user prompt text.
+        enhanced_prompt (str): LLM-enhanced version of the prompt.
+        image_path (Optional[str]): Path to generated image file.
+        model_path (Optional[str]): Path to generated 3D model file.
+        video_path (Optional[str]): Path to generated video file.
+        metadata (Dict[str, Any]): Additional metadata dictionary.
+        tags (List[str]): List of extracted tags for categorization.
+        quality_score (float): Quality score for ranking (0.0-1.0).
+        access_count (int): Number of times this memory has been accessed.
+        last_accessed (Optional[float]): Unix timestamp of last access.
+    """
     id: str
     session_id: str
     user_id: str
     timestamp: float
-    memory_type: str  # 'generation', 'conversation', 'preference'
+    memory_type: str
     original_prompt: str
     enhanced_prompt: str
     image_path: Optional[str] = None
@@ -35,15 +58,31 @@ class MemoryEntry:
     access_count: int = 0
     last_accessed: Optional[float] = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
+        """Initialize default values for mutable fields."""
         if self.metadata is None:
             self.metadata = {}
         if self.tags is None:
             self.tags = []
 
+
 @dataclass
 class SessionContext:
-    """Represents session-specific context and memory."""
+    """
+    Represents session-specific context and memory.
+    
+    This class manages the context and state for individual user sessions,
+    including conversation history and generation statistics.
+    
+    Attributes:
+        session_id (str): Unique session identifier.
+        user_id (str): User identifier for this session.
+        created_at (float): Unix timestamp when session was created.
+        last_activity (float): Unix timestamp of last session activity.
+        context_buffer (List[Dict[str, Any]]): Recent context items for this session.
+        total_generations (int): Total number of generations in this session.
+        session_metadata (Dict[str, Any]): Additional session-specific metadata.
+    """
     session_id: str
     user_id: str
     created_at: float
@@ -52,41 +91,68 @@ class SessionContext:
     total_generations: int = 0
     session_metadata: Dict[str, Any] = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
+        """Initialize default values for mutable fields."""
         if self.session_metadata is None:
             self.session_metadata = {}
+
 
 class MemoryManager:
     """
     Core memory management system for the AI 3D Generator.
     
-    Provides both short-term session memory and long-term persistent storage
-    with support for natural language queries and semantic search.
+    Provides comprehensive memory management including both short-term session memory
+    and long-term persistent storage with support for natural language queries,
+    semantic search, and memory associations.
+    
+    This system is designed to work seamlessly with AI image generation workflows,
+    particularly for 3D model generation and text-to-image applications. It maintains
+    session context, tracks user preferences, and enables intelligent memory retrieval.
+    
+    Attributes:
+        db_path (Path): Path to the SQLite database file.
+        max_context_size (int): Maximum items in session context buffer.
+        active_sessions (Dict[str, SessionContext]): Currently active user sessions.
+    
+    Example:
+        >>> manager = MemoryManager("memory/ai_memory.db")
+        >>> session_id = manager.create_session("user123")
+        >>> memory_id = manager.store_generation(session_id, "user123", "robot", "futuristic robot")
+        >>> memories = manager.search_memories("robot", "user123")
     """
 
-    def __init__(self, db_path: str = "memory/ai_memory.db", max_context_size: int = 20):
+    def __init__(self, db_path: str = "memory/ai_memory.db", max_context_size: int = 20) -> None:
         """
-        Initialize the memory manager.
+        Initialize the memory manager with database and session management.
+        
+        Sets up the SQLite database, creates necessary tables, and loads recent
+        active sessions for immediate availability.
         
         Args:
-            db_path: Path to SQLite database file
-            max_context_size: Maximum number of items in session context buffer
+            db_path (str): Path to SQLite database file. Defaults to "memory/ai_memory.db".
+            max_context_size (int): Maximum number of items in session context buffer.
+                Defaults to 20.
         """
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.max_context_size = max_context_size
         self.active_sessions: Dict[str, SessionContext] = {}
         
-        # Initialize database
+        # Initialize database schema
         self._init_database()
         
-        # Load active sessions from database
+        # Load recent active sessions from database
         self._load_active_sessions()
         
         logging.info(f"🧠 Memory Manager initialized with database: {self.db_path}")
 
-    def _init_database(self):
-        """Initialize the SQLite database with required tables."""
+    def _init_database(self) -> None:
+        """
+        Initialize the SQLite database with required tables and indexes.
+        
+        Creates tables for memory entries, sessions, and memory associations
+        with appropriate indexes for optimal query performance.
+        """
         with sqlite3.connect(self.db_path) as conn:
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS memory_entries (
@@ -138,8 +204,13 @@ class MemoryManager:
             """)
             conn.commit()
 
-    def _load_active_sessions(self):
-        """Load recent active sessions from database."""
+    def _load_active_sessions(self) -> None:
+        """
+        Load recent active sessions from database into memory.
+        
+        Loads sessions that have been active within the last 24 hours to
+        maintain session context and enable quick access to recent user activity.
+        """
         cutoff_time = time.time() - (24 * 60 * 60)  # Last 24 hours
         
         with sqlite3.connect(self.db_path) as conn:
@@ -174,11 +245,14 @@ class MemoryManager:
         """
         Create a new session for the user.
         
+        Generates a new session with unique identifier and initializes
+        the session context for tracking user activity and generations.
+        
         Args:
-            user_id: Identifier for the user
+            user_id (str): Identifier for the user. Defaults to "default".
             
         Returns:
-            str: New session ID
+            str: New session ID for tracking user activity.
         """
         session_id = str(uuid.uuid4())
         current_time = time.time()
@@ -200,21 +274,24 @@ class MemoryManager:
 
     def get_or_create_session(self, user_id: str = "default", session_id: Optional[str] = None) -> str:
         """
-        Get existing session or create new one.
+        Get existing session or create new one if not found.
+        
+        Provides session continuity by retrieving existing sessions or
+        creating new ones as needed. Updates last activity timestamp.
         
         Args:
-            user_id: User identifier
-            session_id: Optional existing session ID
+            user_id (str): User identifier. Defaults to "default".
+            session_id (Optional[str]): Optional existing session ID to retrieve.
             
         Returns:
-            str: Session ID (existing or new)
+            str: Session ID (existing or newly created).
         """
         if session_id and session_id in self.active_sessions:
-            # Update last activity
+            # Update last activity timestamp
             self.active_sessions[session_id].last_activity = time.time()
             return session_id
         
-        # Create new session
+        # Create new session if not found
         return self.create_session(user_id)
 
     def store_generation(self, session_id: str, user_id: str, original_prompt: str, 
@@ -222,25 +299,28 @@ class MemoryManager:
                         model_path: Optional[str] = None, video_path: Optional[str] = None,
                         metadata: Optional[Dict[str, Any]] = None) -> str:
         """
-        Store a generation result in memory.
+        Store a generation result in memory with comprehensive metadata.
+        
+        Creates a new memory entry for generated content including prompts,
+        file paths, extracted tags, and session context updates.
         
         Args:
-            session_id: Session identifier
-            user_id: User identifier
-            original_prompt: Original user prompt
-            enhanced_prompt: LLM-enhanced prompt
-            image_path: Path to generated image
-            model_path: Path to generated 3D model
-            video_path: Path to generated video
-            metadata: Additional metadata
+            session_id (str): Session identifier for this generation.
+            user_id (str): User identifier who created this generation.
+            original_prompt (str): Original user prompt text.
+            enhanced_prompt (str): LLM-enhanced version of the prompt.
+            image_path (Optional[str]): Path to generated image file.
+            model_path (Optional[str]): Path to generated 3D model file.
+            video_path (Optional[str]): Path to generated video file.
+            metadata (Optional[Dict[str, Any]]): Additional metadata dictionary.
             
         Returns:
-            str: Memory entry ID
+            str: Unique memory entry ID for future reference.
         """
         memory_id = str(uuid.uuid4())
         current_time = time.time()
         
-        # Extract tags from prompts
+        # Extract relevant tags from prompts for categorization
         tags = self._extract_tags(original_prompt, enhanced_prompt)
         
         memory_entry = MemoryEntry(
@@ -259,10 +339,10 @@ class MemoryManager:
             quality_score=1.0  # Initial quality score
         )
         
-        # Store in database
+        # Store in persistent database
         self._save_memory_entry(memory_entry)
         
-        # Update session context
+        # Update session context with new generation
         if session_id in self.active_sessions:
             session = self.active_sessions[session_id]
             session.context_buffer.append({
@@ -272,7 +352,7 @@ class MemoryManager:
                 "timestamp": current_time
             })
             
-            # Maintain context buffer size
+            # Maintain context buffer size limit
             if len(session.context_buffer) > self.max_context_size:
                 session.context_buffer = session.context_buffer[-self.max_context_size:]
             
@@ -286,21 +366,27 @@ class MemoryManager:
     def search_memories(self, query: str, user_id: str = "default", 
                        limit: int = 10, memory_type: Optional[str] = None) -> List[MemoryEntry]:
         """
-        Search memories using text-based similarity.
+        Search memories using text-based similarity matching.
+        
+        Performs comprehensive text search across original prompts, enhanced prompts,
+        and tags to find relevant memories. Results are ranked by quality score
+        and recency.
         
         Args:
-            query: Search query
-            user_id: User identifier
-            limit: Maximum number of results
-            memory_type: Optional filter by memory type
+            query (str): Search query text to match against memory content.
+            user_id (str): User identifier to scope search. Defaults to "default".
+            limit (int): Maximum number of results to return. Defaults to 10.
+            memory_type (Optional[str]): Optional filter by memory type
+                ('generation', 'conversation', 'preference').
             
         Returns:
-            List[MemoryEntry]: Matching memory entries
+            List[MemoryEntry]: List of matching memory entries sorted by relevance
+                and recency, with access counts updated.
         """
         query_lower = query.lower()
         
         with sqlite3.connect(self.db_path) as conn:
-            # Build SQL query
+            # Build dynamic SQL query with optional filters
             sql = """
                 SELECT * FROM memory_entries 
                 WHERE user_id = ? AND (
@@ -325,7 +411,7 @@ class MemoryManager:
                 memory_entry = self._row_to_memory_entry(row)
                 results.append(memory_entry)
                 
-                # Update access count
+                # Update access count for usage tracking
                 self._update_access_count(memory_entry.id)
         
         logging.info(f"🔍 Found {len(results)} memories for query: '{query}'")
@@ -336,13 +422,17 @@ class MemoryManager:
         """
         Get recent memories within specified time range.
         
+        Retrieves memories created within the specified time window,
+        useful for showing recent activity or continuing conversations.
+        
         Args:
-            user_id: User identifier
-            limit: Maximum number of results
-            hours: Time range in hours
+            user_id (str): User identifier to scope search. Defaults to "default".
+            limit (int): Maximum number of results to return. Defaults to 10.
+            hours (int): Time range in hours to look back. Defaults to 24.
             
         Returns:
-            List[MemoryEntry]: Recent memory entries
+            List[MemoryEntry]: List of recent memory entries sorted by timestamp
+                (most recent first).
         """
         cutoff_time = time.time() - (hours * 60 * 60)
         
@@ -365,24 +455,30 @@ class MemoryManager:
         """
         Get session context for the given session ID.
         
+        Retrieves complete session information including context buffer,
+        generation statistics, and metadata for maintaining conversational context.
+        
         Args:
-            session_id: Session identifier
+            session_id (str): Session identifier to retrieve.
             
         Returns:
-            Optional[SessionContext]: Session context if found
+            Optional[SessionContext]: Session context if found, None otherwise.
         """
         return self.active_sessions.get(session_id)
 
-    def cleanup_old_sessions(self, days: int = 7):
+    def cleanup_old_sessions(self, days: int = 7) -> None:
         """
-        Clean up old inactive sessions.
+        Clean up old inactive sessions to maintain performance.
+        
+        Removes sessions that haven't been active within the specified
+        time period from both memory and database to prevent resource bloat.
         
         Args:
-            days: Number of days to keep sessions
+            days (int): Number of days to keep sessions. Defaults to 7.
         """
         cutoff_time = time.time() - (days * 24 * 60 * 60)
         
-        # Remove from active sessions
+        # Remove from active sessions in memory
         to_remove = []
         for session_id, session in self.active_sessions.items():
             if session.last_activity < cutoff_time:
@@ -391,7 +487,7 @@ class MemoryManager:
         for session_id in to_remove:
             del self.active_sessions[session_id]
         
-        # Clean up database
+        # Clean up database records
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("DELETE FROM sessions WHERE last_activity < ?", (cutoff_time,))
             conn.commit()
@@ -399,10 +495,22 @@ class MemoryManager:
         logging.info(f"🧹 Cleaned up {len(to_remove)} old sessions")
 
     def _extract_tags(self, original_prompt: str, enhanced_prompt: str) -> List[str]:
-        """Extract relevant tags from prompts."""
+        """
+        Extract relevant tags from prompts for categorization and search.
+        
+        Analyzes prompt text to identify common 3D model categories, styles,
+        colors, and descriptors for improved searchability and organization.
+        
+        Args:
+            original_prompt (str): Original user prompt text.
+            enhanced_prompt (str): Enhanced prompt text.
+            
+        Returns:
+            List[str]: List of extracted tags (limited to 10 for efficiency).
+        """
         combined_text = f"{original_prompt} {enhanced_prompt}".lower()
         
-        # Common 3D model categories and descriptors
+        # Comprehensive tag keywords for 3D model categorization
         tag_keywords = {
             'robot', 'dragon', 'castle', 'house', 'car', 'vehicle', 'animal', 'character',
             'futuristic', 'medieval', 'steampunk', 'cyberpunk', 'fantasy', 'sci-fi',
@@ -415,10 +523,15 @@ class MemoryManager:
             if keyword in combined_text:
                 tags.append(keyword)
         
-        return tags[:10]  # Limit to 10 tags
+        return tags[:10]  # Limit to 10 tags for performance
 
-    def _save_memory_entry(self, entry: MemoryEntry):
-        """Save memory entry to database."""
+    def _save_memory_entry(self, entry: MemoryEntry) -> None:
+        """
+        Save memory entry to persistent database storage.
+        
+        Args:
+            entry (MemoryEntry): Memory entry object to save.
+        """
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("""
                 INSERT INTO memory_entries (
@@ -435,8 +548,13 @@ class MemoryManager:
             ))
             conn.commit()
 
-    def _save_session(self, session: SessionContext):
-        """Save session to database."""
+    def _save_session(self, session: SessionContext) -> None:
+        """
+        Save session context to persistent database storage.
+        
+        Args:
+            session (SessionContext): Session context object to save.
+        """
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("""
                 INSERT OR REPLACE INTO sessions (
@@ -451,7 +569,15 @@ class MemoryManager:
             conn.commit()
 
     def _row_to_memory_entry(self, row) -> MemoryEntry:
-        """Convert database row to MemoryEntry object."""
+        """
+        Convert database row to MemoryEntry object.
+        
+        Args:
+            row: SQLite row tuple from memory_entries table.
+            
+        Returns:
+            MemoryEntry: Constructed memory entry object with parsed JSON fields.
+        """
         (id, session_id, user_id, timestamp, memory_type, original_prompt, enhanced_prompt,
          image_path, model_path, video_path, metadata, tags, quality_score, access_count, last_accessed) = row
         
@@ -473,8 +599,15 @@ class MemoryManager:
             last_accessed=last_accessed
         )
 
-    def _update_access_count(self, memory_id: str):
-        """Update access count for a memory entry."""
+    def _update_access_count(self, memory_id: str) -> None:
+        """
+        Update access count and timestamp for a memory entry.
+        
+        Tracks memory usage for analytics and quality scoring.
+        
+        Args:
+            memory_id (str): Memory entry ID to update.
+        """
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("""
                 UPDATE memory_entries 
@@ -484,4 +617,10 @@ class MemoryManager:
             conn.commit()
 
     def _get_connection(self):
+        """
+        Get database connection for advanced operations.
+        
+        Returns:
+            sqlite3.Connection: Database connection object.
+        """
         return sqlite3.connect(self.db_path)

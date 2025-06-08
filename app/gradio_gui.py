@@ -1,15 +1,24 @@
+"""
+AI 3D Generator Gradio Interface with Memory Integration
+
+A Gradio-based web interface that provides AI-powered 3D model generation
+with intelligent memory management and natural language query capabilities.
+"""
+
+import json
+import logging
+import os
+import shutil
+import sys
+import time
+from pathlib import Path
+from typing import Optional
+
 import gradio as gr
 import requests
-import json
-import os
 from PIL import Image
-import logging
-from pathlib import Path
-import shutil
-import time
 
 # Add path for memory imports
-import sys
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 if parent_dir not in sys.path:
@@ -18,11 +27,49 @@ if parent_dir not in sys.path:
 # Import memory system components
 from memory import MemoryManager, ConversationTracker, SemanticSearch
 
+
 class AI3DGeneratorGUI:
-    def __init__(self, api_url="http://localhost:8888"):
+    """
+    Gradio-based GUI for AI 3D model generation with integrated memory system.
+    
+    This class provides a web interface for generating 3D models from text prompts
+    while maintaining a comprehensive memory system for storing, searching, and
+    recalling previous generations using natural language queries.
+    
+    The interface supports both direct generation requests and memory-based queries,
+    allowing users to create variations of previous work and search through their
+    creation history using conversational language.
+    
+    Attributes:
+        api_url (str): URL of the AI generation API endpoint.
+        latest_image_path (Optional[str]): Path to the most recently generated image.
+        latest_model_path (Optional[str]): Path to the most recently generated 3D model.
+        downloads_dir (str): Directory for storing downloadable files.
+        memory_manager (MemoryManager): Core memory management system.
+        conversation_tracker (ConversationTracker): Natural language processing system.
+        semantic_search (SemanticSearch): Semantic search and retrieval system.
+        current_user_id (str): Identifier for the current user session.
+        current_session_id (str): Identifier for the current session.
+    
+    Example:
+        >>> gui = AI3DGeneratorGUI("http://localhost:8888")
+        >>> interface = gui.create_interface()
+        >>> interface.launch()
+    """
+
+    def __init__(self, api_url: str = "http://localhost:8888") -> None:
+        """
+        Initialize the AI 3D Generator GUI with memory system integration.
+        
+        Sets up the API connection, file management directories, and initializes
+        the complete memory system for local storage and retrieval.
+        
+        Args:
+            api_url (str): URL of the AI generation API. Defaults to "http://localhost:8888".
+        """
         self.api_url = api_url
-        self.latest_image_path = None
-        self.latest_model_path = None
+        self.latest_image_path: Optional[str] = None
+        self.latest_model_path: Optional[str] = None
         
         # Create downloads directory for file access
         self.downloads_dir = "downloads"
@@ -39,19 +86,31 @@ class AI3DGeneratorGUI:
         
         logging.info("🧠 Memory system initialized for Gradio GUI (local only)")
 
-    def copy_files_for_download(self, image_path, model_path):
-        """Copy generated files to downloads directory for easy access"""
+    def copy_files_for_download(self, image_path: Optional[str], model_path: Optional[str]) -> list:
+        """
+        Copy generated files to downloads directory for easy user access.
+        
+        Creates timestamped copies of generated files in the downloads directory
+        to provide users with easily accessible files for download and use.
+        
+        Args:
+            image_path (Optional[str]): Path to the generated image file.
+            model_path (Optional[str]): Path to the generated 3D model file.
+            
+        Returns:
+            list: List of download information strings describing copied files.
+        """
         download_info = []
         
         if image_path and os.path.exists(image_path):
-            # Copy image to downloads
+            # Copy image to downloads with timestamp
             image_name = f"generated_image_{int(time.time())}.png"
             download_image_path = os.path.join(self.downloads_dir, image_name)
             shutil.copy2(image_path, download_image_path)
             download_info.append(f"Image: {download_image_path}")
         
         if model_path and os.path.exists(model_path):
-            # Copy model to downloads
+            # Copy model to downloads with timestamp and original extension
             model_ext = os.path.splitext(model_path)[1]
             model_name = f"generated_model_{int(time.time())}{model_ext}"
             download_model_path = os.path.join(self.downloads_dir, model_name)
@@ -60,12 +119,25 @@ class AI3DGeneratorGUI:
         
         return download_info
 
-    def search_memories(self, query, progress=gr.Progress()):
-        """Search through memory using natural language queries (completely local)"""
+    def search_memories(self, query: str, progress=gr.Progress()) -> tuple:
+        """
+        Search through memory using natural language queries with progress tracking.
+        
+        Processes natural language memory queries to find relevant past generations,
+        supporting temporal queries, entity-based searches, and general recall requests.
+        
+        Args:
+            query (str): Natural language query for searching memories.
+            progress (gr.Progress): Gradio progress tracker for user feedback.
+            
+        Returns:
+            tuple: Contains (image_path, model_path, response_text, image_visibility, model_visibility)
+                for displaying search results in the Gradio interface.
+        """
         try:
             progress(0.2, desc="Parsing memory query...")
             
-            # Parse the memory query
+            # Parse the memory query using conversation tracker
             parsed_query = self.conversation_tracker.parse_memory_query(query)
             
             if not parsed_query['is_memory_query']:
@@ -82,17 +154,17 @@ class AI3DGeneratorGUI:
             
             progress(0.5, desc="Searching memories...")
             
-            # Build search parameters
+            # Build search parameters from parsed query
             search_query = self.conversation_tracker.build_search_query(parsed_query)
             
-            # Perform search based on query type
+            # Perform search based on query type and available parameters
             if search_query['time_range']:
-                # Temporal search
+                # Temporal search for time-based queries
                 search_results = self.semantic_search.temporal_search(
                     self.current_user_id, search_query['time_range'], limit=10
                 )
             elif search_query['entity_filters'] or search_query['text_search']:
-                # Hybrid search
+                # Hybrid search for entity or text-based queries
                 search_results = self.semantic_search.hybrid_search(
                     search_query['text_search'],
                     self.current_user_id,
@@ -101,7 +173,7 @@ class AI3DGeneratorGUI:
                     limit=10
                 )
             else:
-                # Recent memories fallback
+                # Recent memories fallback for general queries
                 recent_memories = self.memory_manager.get_recent_memories(
                     self.current_user_id, limit=5
                 )
@@ -117,7 +189,7 @@ class AI3DGeneratorGUI:
             progress(0.8, desc="Formatting results...")
             
             if search_results:
-                # Get full memory details
+                # Get full memory details from search results
                 memories = []
                 for result in search_results:
                     with self.memory_manager._get_connection() as conn:
@@ -129,7 +201,7 @@ class AI3DGeneratorGUI:
                             memory = self.memory_manager._row_to_memory_entry(row)
                             memories.append(memory)
                 
-                # Format response
+                # Format response using conversation tracker
                 response_text = self.conversation_tracker.format_memory_response(
                     memories, parsed_query.get('intent', 'recall')
                 )
@@ -169,8 +241,21 @@ class AI3DGeneratorGUI:
                 gr.update(visible=False)
             )
 
-    def generate_3d_model(self, prompt, progress=gr.Progress()):
-        """Call your AI pipeline through the API with original schema + local memory"""
+    def generate_3d_model(self, prompt: str, progress=gr.Progress()) -> tuple:
+        """
+        Generate 3D model through API with memory integration and progress tracking.
+        
+        Handles both generation requests and memory queries, enhances prompts using
+        memory context, calls the AI API, and stores results in the memory system.
+        
+        Args:
+            prompt (str): User input prompt for generation or memory query.
+            progress (gr.Progress): Gradio progress tracker for user feedback.
+            
+        Returns:
+            tuple: Contains (image_path, model_path, status_message, image_visibility, model_visibility)
+                for displaying results in the Gradio interface.
+        """
         try:
             progress(0.1, desc="Starting generation...")
             
@@ -186,7 +271,7 @@ class AI3DGeneratorGUI:
             enhanced_prompt = prompt  # Default to original prompt
             
             if parsed_query['intent'] == 'create_similar':
-                # Search for similar past creations
+                # Search for similar past creations for context
                 search_results = self.semantic_search.semantic_search(
                     prompt, self.current_user_id, limit=3
                 )
@@ -203,12 +288,12 @@ class AI3DGeneratorGUI:
             
             progress(0.3, desc="Calling AI pipeline...")
             
-            # Use EXACT original schema - only send prompt
+            # Use exact original schema - only send prompt
             api_payload = {
                 "prompt": enhanced_prompt  # Use enhanced prompt but keep original API schema
             }
             
-            # Call your API with exact original format
+            # Call API with exact original format
             response = requests.post(
                 f"{self.api_url}/execution",
                 json=api_payload,
@@ -221,7 +306,7 @@ class AI3DGeneratorGUI:
                 result = response.json()
                 message = result.get("message", "Generation completed")
                 
-                # Find generated files
+                # Find generated files in outputs directory
                 image_files = []
                 model_files = []
                 
@@ -234,7 +319,7 @@ class AI3DGeneratorGUI:
                 
                 progress(0.9, desc="Storing in memory...")
                 
-                # Get latest files
+                # Get latest files based on creation time
                 latest_image = None
                 latest_model = None
                 
@@ -267,7 +352,7 @@ class AI3DGeneratorGUI:
                         metadata=memory_metadata
                     )
                     
-                    # Add to semantic search index
+                    # Add to semantic search index for future searches
                     self.semantic_search.add_memory_embedding(
                         memory_id, f"{prompt} {enhanced_prompt}"
                     )
@@ -296,7 +381,7 @@ class AI3DGeneratorGUI:
 - "Create something like my last dragon"
 - "List my recent work\""""
                 
-                # Return results
+                # Return results for Gradio interface
                 return (
                     latest_image,
                     latest_model if latest_model and latest_model.endswith('.glb') else None,
@@ -330,8 +415,16 @@ class AI3DGeneratorGUI:
                 gr.update(visible=False)
             )
 
-    def get_recent_memories(self):
-        """Get recent memories for display"""
+    def get_recent_memories(self) -> str:
+        """
+        Get recent memories for display in the interface.
+        
+        Retrieves and formats recent memory entries for display in the
+        memory section of the Gradio interface.
+        
+        Returns:
+            str: Formatted string containing recent memory information.
+        """
         try:
             recent_memories = self.memory_manager.get_recent_memories(
                 self.current_user_id, limit=5
@@ -350,8 +443,16 @@ class AI3DGeneratorGUI:
         except Exception as e:
             return f"Error loading memories: {str(e)}"
 
-    def create_similar_to_last(self):
-        """Create something similar to the last creation"""
+    def create_similar_to_last(self) -> str:
+        """
+        Create a variation prompt based on the last creation.
+        
+        Retrieves the most recent creation and generates a variation prompt
+        for creating similar content with modifications.
+        
+        Returns:
+            str: Variation prompt based on the last creation, or error message.
+        """
         try:
             recent_memories = self.memory_manager.get_recent_memories(
                 self.current_user_id, limit=1
@@ -367,8 +468,16 @@ class AI3DGeneratorGUI:
         except Exception as e:
             return f"Error: {str(e)}"
 
-    def clear_outputs(self):
-        """Clear all outputs"""
+    def clear_outputs(self) -> tuple:
+        """
+        Clear all outputs and reset the interface state.
+        
+        Resets all interface elements to their initial state and clears
+        stored file paths for a fresh start.
+        
+        Returns:
+            tuple: Reset values for all interface elements.
+        """
         self.latest_image_path = None
         self.latest_model_path = None
         return (
@@ -380,8 +489,16 @@ class AI3DGeneratorGUI:
             gr.update(visible=False)   # model_section
         )
 
-    def create_interface(self):
-        """Create the minimalistic Gradio interface with memory integration"""
+    def create_interface(self) -> gr.Blocks:
+        """
+        Create the comprehensive Gradio interface with memory integration.
+        
+        Builds a modern, responsive web interface with integrated memory system,
+        supporting both 3D model generation and natural language memory queries.
+        
+        Returns:
+            gr.Blocks: Configured Gradio interface ready for launch.
+        """
         with gr.Blocks(
             title="AI 3D Generator with Memory",
             theme=gr.themes.Soft(
@@ -496,7 +613,7 @@ class AI3DGeneratorGUI:
             """
         ) as interface:
             
-            # Header
+            # Header section with branding
             gr.HTML("""
             <div class="main-header">
                 <h1>🧠 AI 3D Generator with Memory</h1>
@@ -504,7 +621,7 @@ class AI3DGeneratorGUI:
             </div>
             """)
             
-            # Memory Section
+            # Memory section for displaying recent creations
             with gr.Group(elem_classes=["memory-section"]):
                 gr.HTML("<h3>💾 Memory System (Local)</h3>")
                 memory_display = gr.Textbox(
@@ -528,7 +645,7 @@ class AI3DGeneratorGUI:
                         scale=2
                     )
             
-            # Input Section
+            # Input section for prompts and commands
             with gr.Group(elem_classes=["input-section"]):
                 prompt_input = gr.Textbox(
                     label="Describe your 3D model or use memory commands",
@@ -551,7 +668,7 @@ class AI3DGeneratorGUI:
                         scale=1
                     )
             
-            # Quick Examples with Memory Commands
+            # Quick examples with both generation and memory commands
             with gr.Row():
                 gr.Examples(
                     examples=[
@@ -566,7 +683,7 @@ class AI3DGeneratorGUI:
                     label="Quick Examples (Generation + Memory)"
                 )
             
-            # Output Section
+            # Output section for results and status
             with gr.Group(elem_classes=["output-section"]):
                 status_text = gr.Textbox(
                     label="Status",
@@ -577,9 +694,9 @@ class AI3DGeneratorGUI:
                     value="🚀 Ready! Generate 3D models or search your memories using natural language.\n\n💡 Try: 'show me what I created yesterday' or 'create a robot'"
                 )
                 
-                # Results Grid
+                # Results grid for image and 3D model display
                 with gr.Row(elem_classes=["results-grid"]):
-                    # Image preview
+                    # Image preview section
                     with gr.Group(visible=False, elem_classes=["preview-container"]) as image_section:
                         generated_image = gr.Image(
                             label="Generated Image / Memory Image",
@@ -589,7 +706,7 @@ class AI3DGeneratorGUI:
                             height=300
                         )
                     
-                    # 3D model preview
+                    # 3D model preview section
                     with gr.Group(visible=False, elem_classes=["preview-container"]) as model_section:
                         model_3d = gr.Model3D(
                             label="3D Model / Memory Model",
@@ -597,7 +714,7 @@ class AI3DGeneratorGUI:
                             height=300
                         )
             
-            # Download Info with Memory Location
+            # Download and memory location information
             gr.HTML(f"""
             <div style="text-align: center; margin-top: 2rem; padding: 1rem; background: #f1f5f9; border-radius: 8px; border-left: 4px solid #3b82f6;">
                 <strong>📁 Downloads:</strong> <code>{os.path.abspath(self.downloads_dir)}</code>
@@ -606,7 +723,7 @@ class AI3DGeneratorGUI:
             </div>
             """)
             
-            # Event handlers
+            # Event handlers for user interactions
             generate_btn.click(
                 fn=self.generate_3d_model,
                 inputs=[prompt_input],
@@ -645,8 +762,14 @@ class AI3DGeneratorGUI:
             interface.queue()
             return interface
 
-def main():
-    """Launch the Gradio interface with memory system"""
+
+def main() -> None:
+    """
+    Launch the Gradio interface with comprehensive memory system integration.
+    
+    Initializes the GUI, creates the interface, and launches the web server
+    with detailed logging and configuration information.
+    """
     logging.basicConfig(level=logging.INFO)
     
     # Create GUI instance
@@ -668,6 +791,7 @@ def main():
         show_error=True,
         quiet=False
     )
+
 
 if __name__ == "__main__":
     main()

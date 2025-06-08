@@ -1,7 +1,0 @@
-openfabric-pysdk
-torch
-transformers
-ollama
-pillow
-faiss-cpu
-sentence-transformers

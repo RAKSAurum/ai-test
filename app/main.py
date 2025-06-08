@@ -12,29 +12,27 @@ The pipeline uses discovered API workflows for robust generation handling
 and includes comprehensive memory functionality.
 """
 
-import logging
-import os
-import requests
 import base64
-import time
-from PIL import Image
-from typing import Dict
 import io
 import json
+import logging
+import os
+import time
 import uuid
+from typing import Dict
 
-import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM
 import ollama
+import requests
+import torch
+from PIL import Image
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
+from core.stub import Stub
+from memory import ConversationTracker, MemoryManager, SemanticSearch
 from ontology_dc8f06af066e4a7880a5938933236037.config import ConfigClass
 from ontology_dc8f06af066e4a7880a5938933236037.input import InputClass
 from ontology_dc8f06af066e4a7880a5938933236037.output import OutputClass
-from openfabric_pysdk.context import State, Ray
-from core.stub import Stub
-
-# Import memory system
-from memory import MemoryManager, ConversationTracker, SemanticSearch
+from openfabric_pysdk.context import Ray, State
 
 # Global configurations and API endpoints
 configurations: Dict[str, ConfigClass] = dict()
@@ -46,6 +44,7 @@ memory_manager = MemoryManager()
 conversation_tracker = ConversationTracker()
 semantic_search = SemanticSearch()
 
+
 def generate_image_via_queue(prompt: str, max_wait_time: int = 300) -> bytes:
     """
     Generate image using queue-based workflow for reliable processing.
@@ -56,14 +55,14 @@ def generate_image_via_queue(prompt: str, max_wait_time: int = 300) -> bytes:
     3. Download generated image via resource endpoint
     
     Args:
-        prompt: Text description for image generation
-        max_wait_time: Maximum seconds to wait for generation completion
+        prompt (str): Text description for image generation.
+        max_wait_time (int): Maximum seconds to wait for generation completion.
         
     Returns:
-        bytes: Generated image data
+        bytes: Generated image data.
         
     Raises:
-        Exception: If queue submission, polling, or download fails
+        Exception: If queue submission, polling, or download fails.
     """
     try:
         logging.info(f"🎨 Generating image for prompt: '{prompt}'")
@@ -148,15 +147,15 @@ def generate_3d_model_from_image(image_bytes: bytes, output_type: str = "object"
     5. Download generated 3D resources
     
     Args:
-        image_bytes: Raw image data to convert to 3D
-        output_type: Type of 3D output to generate
-        timeout: Maximum seconds to wait for 3D generation
+        image_bytes (bytes): Raw image data to convert to 3D.
+        output_type (str): Type of 3D output to generate. Defaults to "object".
+        timeout (int): Maximum seconds to wait for 3D generation. Defaults to 600.
         
     Returns:
-        Dict: Contains 3D model data, sizes, and metadata
+        Dict: Contains 3D model data, sizes, and metadata.
         
     Raises:
-        Exception: If 3D generation or download fails
+        Exception: If 3D generation or download fails.
     """
     try:
         logging.info("🗿 Converting image to 3D model...")
@@ -253,9 +252,16 @@ class DeepSeekLLMProcessor:
     Uses Ollama for text enhancement with fallback to rule-based enhancement.
     Provides improved prompt quality for better image generation results and
     incorporates memory context for personalized enhancements.
+    
+    Attributes:
+        model: Transformer model instance (currently unused).
+        tokenizer: Tokenizer instance (currently unused).
+        model_loaded (bool): Flag indicating if model is loaded.
+        device (str): Computing device ('cuda' or 'cpu').
+        model_name (str): Name of the Ollama model to use.
     """
     
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize LLM processor with model configuration."""
         self.model = None
         self.tokenizer = None
@@ -269,13 +275,13 @@ class DeepSeekLLMProcessor:
         Enhance user prompt using LLM with memory context for better image generation.
         
         Args:
-            original_prompt: User's original text description
-            user_id: User identifier for memory context
-            session_id: Session identifier for context
-            memory_context: Optional list of relevant memories for context
+            original_prompt (str): User's original text description.
+            user_id (str): User identifier for memory context. Defaults to "default".
+            session_id (str): Session identifier for context. Defaults to None.
+            memory_context (list): Optional list of relevant memories for context.
             
         Returns:
-            str: Enhanced prompt optimized for image generation
+            str: Enhanced prompt optimized for image generation.
         """
         try:
             # Build context from memory if available
@@ -292,7 +298,15 @@ class DeepSeekLLMProcessor:
             return self._rule_based_enhancement(original_prompt)
 
     def _build_memory_context(self, memory_context: list) -> str:
-        """Build context string from memory entries."""
+        """
+        Build context string from memory entries.
+        
+        Args:
+            memory_context (list): List of memory entries to build context from.
+            
+        Returns:
+            str: Formatted context string for prompt enhancement.
+        """
         if not memory_context:
             return ""
         
@@ -307,11 +321,11 @@ class DeepSeekLLMProcessor:
         Use Ollama LLM for prompt enhancement with context.
         
         Args:
-            prompt: Original user prompt
-            context: Additional context from memory
+            prompt (str): Original user prompt.
+            context (str): Additional context from memory. Defaults to "".
             
         Returns:
-            str: LLM-enhanced prompt or fallback to rule-based
+            str: LLM-enhanced prompt or fallback to rule-based enhancement.
         """
         try:
             enhancement_prompt = f"""Enhance this image prompt for high-quality 3D model generation.
@@ -343,10 +357,10 @@ Make it more detailed and specific for better 3D generation results:"""
         when LLM enhancement is unavailable.
         
         Args:
-            prompt: Original user prompt
+            prompt (str): Original user prompt.
             
         Returns:
-            str: Enhanced prompt using predefined rules
+            str: Enhanced prompt using predefined rules.
         """
         enhancements = {
             'robot': 'sleek mechanical robot with glowing circuits and metallic finish',
@@ -369,12 +383,12 @@ def handle_memory_query(request: InputClass, ray: Ray, state: State) -> OutputCl
     Handle memory-related queries using natural language processing.
     
     Args:
-        request: Input containing memory query
-        ray: Progress tracking object
-        state: Current application state
+        request (InputClass): Input containing memory query.
+        ray (Ray): Progress tracking object.
+        state (State): Current application state.
         
     Returns:
-        OutputClass: Memory query results
+        OutputClass: Memory query results with formatted response.
     """
     try:
         user_id = getattr(request, 'user_id', 'default')
@@ -452,7 +466,7 @@ def handle_memory_query(request: InputClass, ray: Ray, state: State) -> OutputCl
         return response
 
 
-def initialize_default_config():
+def initialize_default_config() -> None:
     """
     Initialize default configuration with API endpoints.
     
@@ -473,12 +487,12 @@ def execute_mock_mode(original_prompt: str, enhanced_prompt: str, ray: Ray) -> O
     and development purposes when external APIs are not accessible.
     
     Args:
-        original_prompt: User's original prompt
-        enhanced_prompt: Enhanced version of prompt
-        ray: Progress tracking object
+        original_prompt (str): User's original prompt.
+        enhanced_prompt (str): Enhanced version of prompt.
+        ray (Ray): Progress tracking object.
         
     Returns:
-        OutputClass: Mock execution results with placeholder files
+        OutputClass: Mock execution results with placeholder files.
     """
     try:
         logging.info("🎭 Mock mode")
@@ -537,8 +551,8 @@ def config(configuration: Dict[str, ConfigClass], state: State) -> None:
     with user-specific settings and API configurations.
     
     Args:
-        configuration: Configuration settings from framework
-        state: Current application state
+        configuration (Dict[str, ConfigClass]): Configuration settings from framework.
+        state (State): Current application state.
     """
     for uid, conf in configuration.items():
         configurations[uid] = conf
@@ -557,12 +571,12 @@ def execute(request: InputClass, ray: Ray, state: State) -> OutputClass:
     6. Result compilation and file management
     
     Args:
-        request: Input containing user prompt and parameters
-        ray: Progress tracking and communication object
-        state: Current application state
+        request (InputClass): Input containing user prompt and parameters.
+        ray (Ray): Progress tracking and communication object.
+        state (State): Current application state.
         
     Returns:
-        OutputClass: Complete pipeline results with generated content paths
+        OutputClass: Complete pipeline results with generated content paths.
     """
     try:
         original_prompt = request.prompt

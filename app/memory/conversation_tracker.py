@@ -2,39 +2,68 @@
 Conversation Tracking and Context Management
 
 Handles conversation flow, context maintenance, and natural language
-understanding for memory queries.
+understanding for memory queries in AI applications.
 """
 
+import logging
 import re
 import time
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass
-import logging
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional, Tuple
+
 
 @dataclass
 class ConversationTurn:
-    """Represents a single turn in a conversation."""
+    """
+    Represents a single turn in a conversation.
+    
+    Attributes:
+        timestamp (float): Unix timestamp when the turn occurred.
+        user_input (str): The user's input text.
+        system_response (str): The system's response text.
+        context (Dict[str, Any]): Additional context information.
+        memory_references (List[str]): References to memory entries used.
+    """
     timestamp: float
     user_input: str
     system_response: str
     context: Dict[str, Any]
     memory_references: List[str] = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
+        """Initialize memory_references as empty list if None."""
         if self.memory_references is None:
             self.memory_references = []
+
 
 class ConversationTracker:
     """
     Tracks conversations and manages context for natural language memory queries.
     
-    Provides functionality to understand temporal references, extract intent,
-    and maintain conversational context for memory operations.
+    This class provides comprehensive functionality to understand temporal references,
+    extract user intent, maintain conversational context, and process natural language
+    queries for memory operations in AI applications.
+    
+    The tracker supports various types of queries including:
+    - Temporal queries (yesterday, last week, etc.)
+    - Intent recognition (recall, create, modify)
+    - Entity extraction (objects, styles, colors)
+    - Search term processing
+    
+    Example:
+        >>> tracker = ConversationTracker()
+        >>> query_info = tracker.parse_memory_query("Show me the robot I created yesterday")
+        >>> search_query = tracker.build_search_query(query_info)
     """
 
-    def __init__(self):
-        """Initialize the conversation tracker."""
+    def __init__(self) -> None:
+        """
+        Initialize the conversation tracker with pattern recognition systems.
+        
+        Sets up temporal patterns, intent patterns, and entity patterns for
+        natural language understanding.
+        """
         self.temporal_patterns = self._init_temporal_patterns()
         self.intent_patterns = self._init_intent_patterns()
         self.entity_patterns = self._init_entity_patterns()
@@ -42,7 +71,12 @@ class ConversationTracker:
         logging.info("💬 Conversation Tracker initialized")
 
     def _init_temporal_patterns(self) -> Dict[str, List[str]]:
-        """Initialize temporal pattern recognition."""
+        """
+        Initialize temporal pattern recognition for time-based queries.
+        
+        Returns:
+            Dict[str, List[str]]: Mapping of temporal types to regex patterns.
+        """
         return {
             'yesterday': [r'\byesterday\b', r'\blast day\b'],
             'today': [r'\btoday\b', r'\bearlier today\b', r'\bthis morning\b', r'\bthis afternoon\b'],
@@ -57,7 +91,12 @@ class ConversationTracker:
         }
 
     def _init_intent_patterns(self) -> Dict[str, List[str]]:
-        """Initialize intent recognition patterns."""
+        """
+        Initialize intent recognition patterns for understanding user goals.
+        
+        Returns:
+            Dict[str, List[str]]: Mapping of intent types to regex patterns.
+        """
         return {
             'recall': [
                 r'\bshow me\b', r'\bfind\b', r'\brecall\b', r'\bremember\b',
@@ -77,7 +116,12 @@ class ConversationTracker:
         }
 
     def _init_entity_patterns(self) -> Dict[str, List[str]]:
-        """Initialize entity extraction patterns."""
+        """
+        Initialize entity extraction patterns for identifying objects, styles, and attributes.
+        
+        Returns:
+            Dict[str, List[str]]: Mapping of entity types to regex patterns.
+        """
         return {
             'objects': [
                 r'\brobot\b', r'\bdragon\b', r'\bcastle\b', r'\bhouse\b', r'\bcar\b',
@@ -103,13 +147,21 @@ class ConversationTracker:
 
     def parse_memory_query(self, user_input: str) -> Dict[str, Any]:
         """
-        Parse user input to extract memory query information.
+        Parse user input to extract comprehensive memory query information.
+        
+        Analyzes the input text to identify intent, temporal references, entities,
+        and search terms for effective memory retrieval.
         
         Args:
-            user_input: Raw user input text
+            user_input (str): Raw user input text to parse.
             
         Returns:
-            Dict containing parsed query information
+            Dict[str, Any]: Comprehensive query information including:
+                - intent: Primary user intent (recall, create_similar, etc.)
+                - temporal: Time-based constraints and ranges
+                - entities: Extracted objects, styles, colors, modifications
+                - search_terms: Key terms for text search
+                - is_memory_query: Boolean indicating if this is memory-related
         """
         query_info = {
             'intent': self._extract_intent(user_input),
@@ -123,7 +175,15 @@ class ConversationTracker:
         return query_info
 
     def _extract_intent(self, text: str) -> str:
-        """Extract the primary intent from user input."""
+        """
+        Extract the primary intent from user input.
+        
+        Args:
+            text (str): Input text to analyze.
+            
+        Returns:
+            str: Identified intent type or 'unknown' if no match found.
+        """
         text_lower = text.lower()
         
         for intent, patterns in self.intent_patterns.items():
@@ -131,7 +191,7 @@ class ConversationTracker:
                 if re.search(pattern, text_lower):
                     return intent
         
-        # Default intent based on context
+        # Fallback intent detection based on common words
         if any(word in text_lower for word in ['show', 'find', 'get', 'recall']):
             return 'recall'
         elif any(word in text_lower for word in ['create', 'make', 'generate']):
@@ -140,7 +200,16 @@ class ConversationTracker:
         return 'unknown'
 
     def _extract_temporal_info(self, text: str) -> Dict[str, Any]:
-        """Extract temporal information from user input."""
+        """
+        Extract temporal information and calculate specific time ranges.
+        
+        Args:
+            text (str): Input text to analyze for temporal references.
+            
+        Returns:
+            Dict[str, Any]: Temporal information including type, specific dates,
+                and calculated time ranges as Unix timestamps.
+        """
         text_lower = text.lower()
         temporal_info = {
             'type': None,
@@ -156,7 +225,7 @@ class ConversationTracker:
                 if re.search(pattern, text_lower):
                     temporal_info['type'] = time_type
                     
-                    # Calculate specific time ranges
+                    # Calculate specific time ranges based on temporal type
                     if time_type == 'yesterday':
                         yesterday = current_time - timedelta(days=1)
                         temporal_info['time_range'] = (
@@ -176,7 +245,7 @@ class ConversationTracker:
                             current_time.timestamp()
                         )
                     elif time_type == 'last_thursday':
-                        # Find last Thursday
+                        # Calculate last Thursday's date
                         days_since_thursday = (current_time.weekday() - 3) % 7
                         if days_since_thursday == 0:  # Today is Thursday
                             days_since_thursday = 7
@@ -194,7 +263,16 @@ class ConversationTracker:
         return temporal_info
 
     def _extract_entities(self, text: str) -> Dict[str, List[str]]:
-        """Extract entities (objects, styles, colors, etc.) from text."""
+        """
+        Extract entities (objects, styles, colors, modifications) from text.
+        
+        Args:
+            text (str): Input text to analyze for entities.
+            
+        Returns:
+            Dict[str, List[str]]: Mapping of entity types to found entities,
+                with duplicates removed.
+        """
         text_lower = text.lower()
         entities = {}
         
@@ -214,8 +292,16 @@ class ConversationTracker:
         return entities
 
     def _extract_search_terms(self, text: str) -> List[str]:
-        """Extract key search terms from user input."""
-        # Remove common stop words and extract meaningful terms
+        """
+        Extract meaningful search terms by removing stop words and short terms.
+        
+        Args:
+            text (str): Input text to process.
+            
+        Returns:
+            List[str]: List of meaningful search terms for text matching.
+        """
+        # Comprehensive stop words list for better search term extraction
         stop_words = {
             'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
             'of', 'with', 'by', 'from', 'up', 'about', 'into', 'through', 'during',
@@ -226,14 +312,22 @@ class ConversationTracker:
             'should', 'may', 'might', 'must', 'can', 'show', 'find', 'get', 'like'
         }
         
-        # Clean and tokenize
+        # Extract words and filter out stop words and short terms
         words = re.findall(r'\b\w+\b', text.lower())
         search_terms = [word for word in words if word not in stop_words and len(word) > 2]
         
         return search_terms
 
     def _is_memory_query(self, text: str) -> bool:
-        """Determine if the input is a memory-related query."""
+        """
+        Determine if the input is a memory-related query.
+        
+        Args:
+            text (str): Input text to analyze.
+            
+        Returns:
+            bool: True if the input appears to be a memory query, False otherwise.
+        """
         memory_indicators = [
             'show me', 'find', 'recall', 'remember', 'get', 'look for',
             'yesterday', 'last', 'earlier', 'before', 'previous',
@@ -247,11 +341,15 @@ class ConversationTracker:
         """
         Build a structured search query from parsed information.
         
+        Converts the parsed natural language query into a structured format
+        suitable for memory system searches.
+        
         Args:
-            parsed_query: Parsed query information
+            parsed_query (Dict[str, Any]): Parsed query information from parse_memory_query.
             
         Returns:
-            Dict containing search parameters
+            Dict[str, Any]: Structured search query with text search terms,
+                time constraints, entity filters, and intent information.
         """
         search_query = {
             'text_search': ' '.join(parsed_query.get('search_terms', [])),
@@ -260,12 +358,12 @@ class ConversationTracker:
             'intent': parsed_query.get('intent', 'unknown')
         }
         
-        # Add temporal constraints
+        # Add temporal constraints if present
         temporal_info = parsed_query.get('temporal', {})
         if temporal_info.get('time_range'):
             search_query['time_range'] = temporal_info['time_range']
         
-        # Add entity filters
+        # Add entity filters for refined searching
         entities = parsed_query.get('entities', {})
         for entity_type, entity_list in entities.items():
             if entity_list:
@@ -277,18 +375,23 @@ class ConversationTracker:
         """
         Format memory search results into a natural language response.
         
+        Creates user-friendly responses based on the search results and
+        the original query intent.
+        
         Args:
-            memories: List of memory entries
-            query_intent: The intent of the original query
+            memories (List[Any]): List of memory entries from search results.
+            query_intent (str): The intent of the original query.
             
         Returns:
-            str: Formatted response text
+            str: Formatted response text with memory information,
+                limited to 5 results with additional count if more exist.
         """
         if not memories:
             return "I couldn't find any memories matching your request. Try describing what you're looking for differently."
         
         response_parts = []
         
+        # Customize response based on intent
         if query_intent == 'recall':
             response_parts.append(f"I found {len(memories)} memory(ies) matching your request:")
         elif query_intent == 'list':
@@ -296,7 +399,8 @@ class ConversationTracker:
         else:
             response_parts.append(f"Found {len(memories)} relevant memory(ies):")
         
-        for i, memory in enumerate(memories[:5], 1):  # Limit to 5 results
+        # Format individual memory entries
+        for i, memory in enumerate(memories[:5], 1):  # Limit to 5 results for readability
             timestamp = datetime.fromtimestamp(memory.timestamp)
             time_str = timestamp.strftime("%Y-%m-%d %H:%M")
             
@@ -304,9 +408,11 @@ class ConversationTracker:
                 f"\n{i}. **{memory.original_prompt}** (created {time_str})"
             )
             
-            if memory.tags:
+            # Add tags if available
+            if hasattr(memory, 'tags') and memory.tags:
                 response_parts.append(f"   Tags: {', '.join(memory.tags[:5])}")
         
+        # Indicate if there are more results
         if len(memories) > 5:
             response_parts.append(f"\n... and {len(memories) - 5} more results")
         

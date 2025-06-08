@@ -5,10 +5,11 @@ This module provides a simplified interface for connecting to and calling remote
 via HTTP API endpoints. It handles connection management and API calls with proper error handling.
 """
 
-import requests
-import logging
-from typing import List, Dict
 import json
+import logging
+from typing import Dict, List
+
+import requests
 
 
 class Remote:
@@ -16,26 +17,44 @@ class Remote:
     Represents a connection to a remote application.
     
     Handles the connection lifecycle and API calls to a single remote endpoint.
+    This class manages individual connections and provides methods for testing
+    connectivity and making API calls.
+    
+    Attributes:
+        url (str): The base URL of the remote application.
+        proxy_name (str): Name identifier for this proxy connection.
+        connected (bool): Current connection status.
+    
+    Example:
+        >>> remote = Remote("https://api.example.com", "example-proxy")
+        >>> remote.connect()
+        >>> response = remote.call({"input": "data"})
     """
     
-    def __init__(self, url: str, proxy_name: str):
+    def __init__(self, url: str, proxy_name: str) -> None:
         """
         Initialize a remote connection.
         
         Args:
-            url: The base URL of the remote application
-            proxy_name: Name identifier for this proxy connection
+            url (str): The base URL of the remote application.
+            proxy_name (str): Name identifier for this proxy connection.
         """
         self.url = url
         self.proxy_name = proxy_name
         self.connected = False
 
-    def connect(self):
+    def connect(self) -> 'Remote':
         """
-        Establish connection to the remote application by checking its manifest endpoint.
+        Establish connection to the remote application.
+        
+        Tests connectivity by checking the manifest endpoint of the remote application.
+        Updates the connection status based on the response.
         
         Returns:
-            self: Returns self for method chaining
+            Remote: Returns self for method chaining.
+            
+        Note:
+            Uses a 10-second timeout for the connection test.
         """
         try:
             response = requests.get(f"{self.url}/manifest", timeout=10)
@@ -47,18 +66,25 @@ class Remote:
             self.connected = False
         return self
 
-    def call(self, input_data: dict):
+    def call(self, input_data: dict) -> dict:
         """
         Make an API call to the remote application.
         
+        Sends a POST request to the execution endpoint with the provided input data.
+        Handles JSON parsing and provides fallback for non-JSON responses.
+        
         Args:
-            input_data: Dictionary containing the data to send to the remote app
+            input_data (dict): Dictionary containing the data to send to the remote app.
             
         Returns:
-            dict: Response from the remote application
+            dict: Response from the remote application, either parsed JSON or
+                wrapped text response.
             
         Raises:
-            Exception: If not connected or if the API call fails
+            Exception: If not connected or if the API call fails.
+            
+        Note:
+            Uses a 60-second timeout for API calls to accommodate longer processing times.
         """
         if not self.connected:
             raise Exception(f"Not connected to {self.url}")
@@ -76,6 +102,7 @@ class Remote:
                 try:
                     return response.json()
                 except json.JSONDecodeError:
+                    # Fallback for non-JSON responses
                     return {"result": response.text}
             else:
                 raise Exception(f"API call failed: {response.status_code}")
@@ -90,15 +117,28 @@ class Stub:
     Main stub class for managing connections to multiple remote applications.
     
     Provides a unified interface for connecting to and calling multiple remote apps,
-    with fallback mechanisms for compatibility.
+    with fallback mechanisms for compatibility. This class handles connection pooling,
+    URL normalization, and provides methods for checking connection status.
+    
+    Attributes:
+        _connections (Dict[str, Remote]): Internal mapping of URLs to Remote instances.
+        apps (List[str]): List of application URLs provided during initialization.
+    
+    Example:
+        >>> stub = Stub(["https://api1.example.com", "https://api2.example.com"])
+        >>> response = stub.call("https://api1.example.com", {"input": "data"}, "user123")
+        >>> connected_apps = stub.get_connected_apps()
     """
     
-    def __init__(self, app_urls: List[str]):
+    def __init__(self, app_urls: List[str]) -> None:
         """
         Initialize the stub with a list of application URLs.
         
+        Automatically attempts to establish connections to all provided URLs
+        and logs the overall connection status.
+        
         Args:
-            app_urls: List of URLs for remote applications to connect to
+            app_urls (List[str]): List of URLs for remote applications to connect to.
         """
         self._connections: Dict[str, Remote] = {}
         self.apps = app_urls
@@ -109,23 +149,34 @@ class Stub:
         """
         Normalize a URL to ensure consistent formatting.
         
+        Converts HTTP to HTTPS, adds protocol if missing, and removes trailing slashes
+        for consistent URL handling across the application.
+        
         Args:
-            url: Raw URL string
+            url (str): Raw URL string that may need normalization.
             
         Returns:
-            str: Normalized URL with https protocol and no trailing slash
+            str: Normalized URL with https protocol and no trailing slash.
+            
+        Example:
+            >>> stub._normalize_url("http://example.com/")
+            "https://example.com"
         """
         url = url.strip('/').replace('http://', 'https://')
         if not url.startswith('https://'):
             url = f"https://{url}"
         return url.rstrip('/')
 
-    def _establish_connections(self, app_urls: List[str]):
+    def _establish_connections(self, app_urls: List[str]) -> None:
         """
         Attempt to establish connections to all provided application URLs.
         
+        Tests each URL by hitting the manifest endpoint and creates Remote instances
+        for successful connections. Failed connections are logged but don't prevent
+        initialization.
+        
         Args:
-            app_urls: List of application URLs to connect to
+            app_urls (List[str]): List of application URLs to connect to.
         """
         for app_url in app_urls:
             normalized_url = self._normalize_url(app_url)
@@ -141,8 +192,13 @@ class Stub:
             except Exception as e:
                 logging.error(f"❌ Failed to connect to {normalized_url}: {e}")
 
-    def _log_connection_status(self):
-        """Log the overall connection status after initialization."""
+    def _log_connection_status(self) -> None:
+        """
+        Log the overall connection status after initialization.
+        
+        Provides summary information about successful connections or warnings
+        if no connections were established.
+        """
         connected_apps = self.get_connected_apps()
         if connected_apps:
             logging.info(f"✅ Connected to {len(connected_apps)} apps")
@@ -154,18 +210,20 @@ class Stub:
         Call a remote application with input data.
         
         This is a compatibility wrapper that attempts to use established connections
-        but falls back gracefully for direct API usage.
+        but falls back gracefully for direct API usage. The user_id parameter is
+        maintained for API compatibility but not currently used in the implementation.
         
         Args:
-            app_url: URL of the application to call
-            input_data: Data to send to the application
-            user_id: User identifier (maintained for compatibility)
+            app_url (str): URL of the application to call.
+            input_data (dict): Data to send to the application.
+            user_id (str): User identifier (maintained for compatibility).
             
         Returns:
             dict: Response from the remote application or fallback indicator
+                containing {"result": "using_direct_api_calls"} if no connection exists.
             
         Raises:
-            Exception: If the API call fails
+            Exception: If the API call fails after a successful connection.
         """
         normalized_url = self._normalize_url(app_url)
         
@@ -190,7 +248,8 @@ class Stub:
         Get a list of successfully connected application URLs.
         
         Returns:
-            List[str]: URLs of applications that are currently connected
+            List[str]: URLs of applications that are currently connected and available
+                for API calls.
         """
         return [url for url, conn in self._connections.items() if conn.connected]
 
@@ -199,10 +258,11 @@ class Stub:
         Check if a specific application is connected.
         
         Args:
-            app_url: URL of the application to check
+            app_url (str): URL of the application to check.
             
         Returns:
-            bool: True if the application is connected, False otherwise
+            bool: True if the application is connected and ready for API calls,
+                False otherwise.
         """
         normalized_url = self._normalize_url(app_url)
         return (normalized_url in self._connections and 
