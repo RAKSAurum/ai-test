@@ -129,21 +129,6 @@ install_dependencies() {
     log_success "Dependencies installed successfully"
 }
 
-# Create essential project directories with proper structure
-create_project_directories() {
-    log_info "Creating project directory structure..."
-    
-    local directories=("outputs" "memory" "logs" "models" "downloads" "temp")
-    
-    for dir in "${directories[@]}"; do
-        if mkdir -p "${dir}"; then
-            log_success "Created directory: ${dir}/"
-        else
-            log_warning "Failed to create directory: ${dir}/"
-        fi
-    done
-}
-
 # Comprehensive OpenFabric SDK verification with detailed error reporting
 verify_openfabric_installation() {
     log_info "Verifying openfabric-pysdk installation..."
@@ -271,7 +256,6 @@ main() {
     check_poetry_installation
     validate_python_version
     install_dependencies
-    create_project_directories
     verify_openfabric_installation
     load_environment_variables
     perform_preflight_checks
