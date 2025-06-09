@@ -11,7 +11,8 @@ import shutil
 import sqlite3
 import sys
 import time
-from typing import Optional
+from typing import Optional, Set, Dict, List, TypeVar, Generic
+from datetime import datetime
 
 import chainlit as cl
 import requests
@@ -24,6 +25,73 @@ if parent_dir not in sys.path:
 
 from memory import MemoryManager, ConversationTracker, SemanticSearch
 from memory.semantic_search import SearchResult
+from memory import MemoryEntry
+
+# Configure logging with safe directory creation
+import logging
+
+# Safely create logging handlers
+log_handlers = [logging.StreamHandler()]
+
+try:
+    os.makedirs("logs", exist_ok=True)
+    log_handlers.append(logging.FileHandler('logs/chainlit.log'))
+except Exception as e:
+    print(f"Warning: Could not create log file: {e}")
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=log_handlers
+)
+logger = logging.getLogger(__name__)
+
+T = TypeVar('T')
+
+class DedupManager(Generic[T]):
+    """Generic deduplication manager for memory results."""
+    
+    def __init__(self, name: str):
+        self.name = name
+        self.seen_items: Set[str] = set()
+        self.dedup_stats: Dict[str, int] = {
+            'total_processed': 0,
+            'duplicates_filtered': 0,
+            'unique_passed': 0
+        }
+        try:
+            os.makedirs("logs", exist_ok=True)
+            self._setup_logging()
+        except Exception as e:
+            print(f"Warning: Failed to setup logging: {e}")
+            self.logger = logging.getLogger(f"dedup_{self.name}")
+
+    def _setup_logging(self) -> None:
+        self.logger = logging.getLogger(f"dedup_{self.name}")
+        self.logger.setLevel(logging.INFO)
+        handler = logging.FileHandler(f"logs/dedup_{self.name}_{datetime.now().strftime('%Y%m%d')}.log")
+        handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+        self.logger.addHandler(handler)
+
+    def deduplicate(self, items: List[T], key_func) -> List[T]:
+        """Deduplicate items based on a key function."""
+        self.dedup_stats['total_processed'] += len(items)
+        
+        seen = set()
+        deduped = []
+        
+        for item in items:
+            key = key_func(item)
+            if key not in seen:
+                seen.add(key)
+                deduped.append(item)
+                self.dedup_stats['unique_passed'] += 1
+            else:
+                self.dedup_stats['duplicates_filtered'] += 1
+                self.logger.info(f"Filtered duplicate: {key}")
+        
+        return deduped
+
 
 # Configuration
 DOWNLOADS_DIR = "downloads"
@@ -36,6 +104,9 @@ semantic_search = SemanticSearch()
 
 # Global session tracking
 user_sessions = {}
+
+# Initialize dedup manager globally
+memory_dedup = DedupManager[MemoryEntry]("chainlit")
 
 
 def call_api_sync(prompt: str) -> requests.Response:
@@ -110,6 +181,35 @@ async def debug_memory() -> list:
         import traceback
         traceback.print_exc()
         return []
+
+
+async def debug_file_system() -> None:
+    """Debug function to check file system state."""
+    print("=== FILE SYSTEM DEBUG ===")
+    
+    # Check directories
+    for directory in ["outputs", "downloads"]:
+        if os.path.exists(directory):
+            files = os.listdir(directory)
+            print(f"{directory}/: {len(files)} files")
+            for file in files[:5]:  # Show first 5 files
+                filepath = os.path.join(directory, file)
+                size = os.path.getsize(filepath)
+                accessible = verify_file_permissions(filepath)
+                print(f"  - {file}: {size} bytes, accessible: {accessible}")
+        else:
+            print(f"{directory}/: Does not exist")
+    
+    # Check recent memory entries
+    user_id = cl.user_session.get("user_id", "default")
+    recent_memories = memory_manager.get_recent_memories(user_id, limit=3)
+    print(f"\nRECENT MEMORIES: {len(recent_memories)}")
+    
+    for i, memory in enumerate(recent_memories):
+        print(f"Memory {i+1}:")
+        print(f"  - Prompt: {memory.original_prompt}")
+        print(f"  - Image: {memory.image_path} (exists: {os.path.exists(memory.image_path) if memory.image_path else False})")
+        print(f"  - Model: {memory.model_path} (exists: {os.path.exists(memory.model_path) if memory.model_path else False})")
 
 
 @cl.on_chat_start
@@ -193,6 +293,11 @@ Just describe what you want to create!"""
             name="debug_memory_direct",
             label="🔍 Debug Memory",
             payload={}
+        ),
+        cl.Action(
+            name="debug_files",
+            label="📁 Debug Files",
+            payload={}
         )
     ]
     
@@ -255,10 +360,10 @@ async def debug_memory_direct(action) -> None:
                 response_text += f"{i}. {memory.original_prompt} ({timestamp})\n"
                 
                 if memory.image_path and os.path.exists(memory.image_path):
-                    elements.append(cl.Image(name=f"Image {i}", path=memory.image_path, display="inline"))
+                    elements.append(cl.Image(name=f"Image_{i}", path=memory.image_path, display="inline"))
                 
                 if memory.model_path and os.path.exists(memory.model_path):
-                    elements.append(cl.File(name=f"Model {i}", path=memory.model_path, display="inline"))
+                    elements.append(cl.File(name=f"Model_{i}", path=memory.model_path, display="inline"))
             
             await cl.Message(content=response_text, elements=elements).send()
         else:
@@ -269,6 +374,13 @@ async def debug_memory_direct(action) -> None:
         print(f"DEBUG: Direct memory test error: {e}")
         import traceback
         traceback.print_exc()
+
+
+@cl.action_callback("debug_files")
+async def debug_files_action(action) -> None:
+    """Debug file system action callback."""
+    await debug_file_system()
+    await cl.Message(content="Check console for file system debug info").send()
 
 
 @cl.on_message
@@ -295,15 +407,7 @@ async def main(message: cl.Message) -> None:
 
 
 async def handle_memory_query(query: str) -> None:
-    """
-    Handle memory-related queries with comprehensive search and display.
-    
-    Processes natural language memory queries, searches through stored memories,
-    and displays results with associated images and 3D models.
-    
-    Args:
-        query (str): Natural language memory query to process.
-    """
+    """Handle memory-related queries with comprehensive search and display."""
     user_id = cl.user_session.get("user_id", "default")
     print(f"DEBUG: Memory query from user {user_id}: '{query}'")
     
@@ -364,37 +468,44 @@ DEBUG INFO:
                     ) for mem in recent_memories
                 ]
         
-        print(f"DEBUG: Search returned {len(search_results)} results")
+        logger.info(f"Found {len(search_results)} initial results")
         
         # Get full memory details and create response
         if search_results:
             memories = []
             elements = []
+            seen_prompts = set()  # Track unique prompts
             
-            for result in search_results[:5]:  # Limit to 5 results
-                print(f"DEBUG: Processing result: {result.memory_id}")
-                # Get memory from database
+            for result in search_results:
                 with sqlite3.connect(memory_manager.db_path) as conn:
                     cursor = conn.execute("SELECT * FROM memory_entries WHERE id = ?", (result.memory_id,))
                     row = cursor.fetchone()
-                    
                     if row:
                         memory = memory_manager._row_to_memory_entry(row)
-                        memories.append(memory)
-                        print(f"DEBUG: Found memory: {memory.original_prompt}")
-                        
-                        if memory.image_path and os.path.exists(memory.image_path):
-                            elements.append(cl.Image(name=f"Image: {memory.original_prompt[:30]}...", path=memory.image_path, display="inline"))
-                            print(f"DEBUG: Added image: {memory.image_path}")
-                        
-                        if memory.model_path and os.path.exists(memory.model_path):
-                            elements.append(cl.File(name=f"3D Model: {memory.original_prompt[:30]}...", path=memory.model_path, display="inline"))
-                            print(f"DEBUG: Added model: {memory.model_path}")
-                    else:
-                        print(f"DEBUG: No database row found for memory_id: {result.memory_id}")
+                        # Only add if we haven't seen this prompt before
+                        if memory.original_prompt.lower().strip() not in seen_prompts:
+                            memories.append(memory)
+                            seen_prompts.add(memory.original_prompt.lower().strip())
+                            
+                            # Add visual elements for this memory
+                            if memory.image_path and os.path.exists(memory.image_path):
+                                elements.append(cl.Image(
+                                    name=f"Image_{memory.id}", 
+                                    path=memory.image_path, 
+                                    display="inline"
+                                ))
+                            if memory.model_path and os.path.exists(memory.model_path):
+                                elements.append(cl.File(
+                                    name=f"Model_{memory.id}", 
+                                    path=memory.model_path, 
+                                    display="inline"
+                                ))
             
-            # Format response
-            response_text = conversation_tracker.format_memory_response(memories, parsed_query.get('intent', 'recall'))
+            # No need for additional deduplication since we're already filtering
+            response_text = conversation_tracker.format_memory_response(
+                memories,
+                parsed_query.get('intent', 'recall')
+            )
             
             print(f"DEBUG: Final response with {len(memories)} memories and {len(elements)} elements")
             
@@ -435,27 +546,29 @@ async def on_create_similar_to_memory(action) -> None:
     await handle_generation(variation_prompt, reference_memory_id=memory_id)
 
 
-def copy_file_safely(src: str, dest: str) -> Optional[str]:
-    """
-    Safely copy a file from source to destination with error handling.
-    
-    Creates destination directory if needed and handles file copying
-    with proper error handling and resource management.
-    
-    Args:
-        src (str): Source file path to copy from.
-        dest (str): Destination file path to copy to.
-        
-    Returns:
-        Optional[str]: Destination path if successful, None if failed.
-    """
+def verify_file_permissions(filepath: str) -> bool:
+    """Verify file exists and is accessible."""
     try:
-        if src and os.path.exists(src):
+        if not os.path.exists(filepath):
+            return False
+        # Check read permissions
+        with open(filepath, 'rb') as f:
+            f.read(1)
+        return True
+    except Exception as e:
+        print(f"File access error {filepath}: {e}")
+        return False
+
+# Update copy_file_safely function
+def copy_file_safely(src: str, dest: str) -> Optional[str]:
+    """Safely copy a file with permission checks."""
+    try:
+        if src and verify_file_permissions(src):
             os.makedirs(os.path.dirname(dest), exist_ok=True)
-            with open(src, 'rb') as src_file:
-                with open(dest, 'wb') as dest_file:
-                    shutil.copyfileobj(src_file, dest_file)
-            return dest
+            shutil.copy2(src, dest)
+            # Ensure copied file is readable
+            os.chmod(dest, 0o644)
+            return dest if verify_file_permissions(dest) else None
     except Exception as e:
         print(f"Error copying file {src} to {dest}: {e}")
     return None
@@ -518,21 +631,28 @@ async def handle_generation(prompt: str, reference_memory_id: Optional[str] = No
         await processing_msg.update()
         
         memory_context = []
-        enhanced_prompt = prompt
-        
+        seen_prompts = set()
+
         # Build memory context for enhanced generation
         if reference_memory_id:
             with sqlite3.connect(memory_manager.db_path) as conn:
                 cursor = conn.execute("SELECT * FROM memory_entries WHERE id = ?", (reference_memory_id,))
                 row = cursor.fetchone()
                 if row:
-                    memory_context.append(memory_manager._row_to_memory_entry(row))
+                    memory = memory_manager._row_to_memory_entry(row)
+                    memory_context.append(memory)
+                    seen_prompts.add(memory.original_prompt.lower().strip())
         else:
             search_results = semantic_search.semantic_search(prompt, user_id, limit=3)
             for result in search_results:
                 memories = memory_manager.search_memories(result.matched_content, user_id, limit=1)
-                memory_context.extend(memories)
+                for memory in memories:
+                    if memory.original_prompt.lower().strip() not in seen_prompts:
+                        memory_context.append(memory)
+                        seen_prompts.add(memory.original_prompt.lower().strip())
         
+        # Create enhanced prompt with memory context
+        enhanced_prompt = prompt
         if memory_context:
             context_prompts = [mem.original_prompt for mem in memory_context[:2]]
             enhanced_prompt = f"{prompt} (inspired by: {', '.join(context_prompts)})"
@@ -581,9 +701,31 @@ async def handle_generation(prompt: str, reference_memory_id: Optional[str] = No
                 image_filename = f"image_{timestamp}{ext}"
                 image_path = os.path.join(DOWNLOADS_DIR, image_filename)
                 
-                if copy_file_safely(latest_image, image_path):
-                    elements.append(cl.Image(name=image_filename, path=image_path, display="inline", size="large"))
+                copied_image_path = copy_file_safely(latest_image, image_path)
+                if copied_image_path and verify_file_permissions(copied_image_path):
+                    print(f"DEBUG: Successfully copied image to {copied_image_path}")
+                    
+                    # Add image display element (consistent with memory display)
+                    elements.append(
+                        cl.Image(
+                            name=f"Image_{timestamp}",
+                            path=copied_image_path,
+                            display="inline"
+                        )
+                    )
+                    
+                    # Add image download button
+                    elements.append(
+                        cl.File(
+                            name=f"ImageDownload_{timestamp}",
+                            path=copied_image_path,
+                            display="inline"
+                        )
+                    )
+                    
                     download_info.append(f"🖼️ **Image:** `{image_filename}`")
+                else:
+                    print(f"DEBUG: Failed to copy or verify image file: {latest_image}")
             
             # Process 3D model file
             model_path = None
@@ -592,14 +734,25 @@ async def handle_generation(prompt: str, reference_memory_id: Optional[str] = No
                 model_filename = f"model_{timestamp}{proper_ext}"
                 model_path = os.path.join(DOWNLOADS_DIR, model_filename)
                 
-                if copy_file_safely(latest_model, model_path):
-                    mime_type = "model/gltf-binary" if proper_ext == '.glb' else "model/gltf+json"
-                    elements.append(cl.File(name=model_filename, path=model_path, display="inline", mime=mime_type))
-                    download_info.append(f"🗿 **3D Model:** `{model_filename}`")
+                copied_model_path = copy_file_safely(latest_model, model_path)
+                if copied_model_path and verify_file_permissions(copied_model_path):
+                    print(f"DEBUG: Successfully copied model to {copied_model_path}")
                     
-                    file_size = os.path.getsize(model_path)
+                    # Add model download button (consistent with memory display)
+                    elements.append(
+                        cl.File(
+                            name=f"Model_{timestamp}",
+                            path=copied_model_path,
+                            display="inline"
+                        )
+                    )
+                    
+                    download_info.append(f"🗿 **3D Model:** `{model_filename}`")
+                    file_size = os.path.getsize(copied_model_path)
                     download_info.append(f"   └── Size: {file_size:,} bytes")
                     download_info.append(f"   └── Format: {proper_ext.upper()}")
+                else:
+                    print(f"DEBUG: Failed to copy or verify model file: {latest_model}")
             
             # Store in memory system
             try:
@@ -625,6 +778,8 @@ async def handle_generation(prompt: str, reference_memory_id: Optional[str] = No
                 traceback.print_exc()
             
             total_time = int(time.time() - start_time)
+            
+            # Create success message
             success_content = f"""## ✅ Generation Complete! ({total_time}s)
 
 **Prompt:** "{prompt}"
@@ -633,17 +788,23 @@ async def handle_generation(prompt: str, reference_memory_id: Optional[str] = No
 **Generated Files:**
 {chr(10).join(download_info)}
 
-**Downloads Location:** `{os.path.abspath(DOWNLOADS_DIR)}`"""
-            
-            await cl.Message(content=success_content, elements=elements).send()
-            
-            await cl.Message(content="""**💾 Memory:** This creation has been stored and can be recalled using natural language queries!
+**Downloads:** Click the download buttons above to save files
+**Location:** `{os.path.abspath(DOWNLOADS_DIR)}`
 
-**3D File Usage:**
+**💾 Memory:** This creation has been stored and can be recalled later!"""
+
+            # Update the message with content and elements
+            processing_msg.content = success_content
+            processing_msg.elements = elements
+            await processing_msg.update()
+            
+            # Send additional information
+            await cl.Message(content="""**3D File Usage:**
 - 🔧 **Blender:** File → Import → glTF 2.0 (.glb/.gltf)
 - 🎮 **Unity:** Drag file into Assets folder
-- 🌐 **Online:** threejs.org/editor or gltf-viewer.donmccurdy.com""").send()
+- 🌐 **Online:** gltf-viewer.donmccurdy.com""").send()
             
+            # Add action buttons
             actions = [
                 cl.Action(name="generate_another", label="🎨 Generate Another", payload={"action": "new"}),
                 cl.Action(name="create_variation", label="🔄 Create Variation", payload={"prompt": f"create a variation of: {prompt}"}),
@@ -699,6 +860,57 @@ async def view_memories(action) -> None:
     """Handle view memories action callback."""
     await handle_memory_query(action.payload["prompt"])
 
+# Utility function for deduplicating memory context
+def deduplicate_memory_context(memories: List[MemoryEntry]) -> List[MemoryEntry]:
+    """Deduplicate memory context based on content similarity."""
+    seen = set()
+    deduped = []
+    
+    for memory in memories:
+        # Create a unique key combining prompt and timestamp
+        key = f"{memory.original_prompt.lower().strip()}_{memory.timestamp}"
+        if key not in seen:
+            seen.add(key)
+            deduped.append(memory)
+            
+    return deduped
 
+def cleanup_files() -> None:
+    """Clean up old generated files."""
+    try:
+        # Clean up downloads older than 7 days
+        now = time.time()
+        max_age = 7 * 24 * 60 * 60  # 7 days in seconds
+        
+        for directory in [DOWNLOADS_DIR, "outputs"]:
+            if os.path.exists(directory):
+                for filename in os.listdir(directory):
+                    filepath = os.path.join(directory, filename)
+                    if os.path.isfile(filepath):
+                        if os.stat(filepath).st_mtime < now - max_age:
+                            try:
+                                os.remove(filepath)
+                                print(f"Cleaned up old file: {filepath}")
+                            except Exception as e:
+                                print(f"Failed to remove {filepath}: {e}")
+    except Exception as e:
+        print(f"Cleanup error: {e}")
+
+def check_environment() -> None:
+    """Check and initialize required environment."""
+    required_dirs = ["downloads", "outputs", "logs"]
+    for directory in required_dirs:
+        try:
+            os.makedirs(directory, exist_ok=True)
+            # Ensure directory is readable and writable
+            os.chmod(directory, 0o755)
+            print(f"✓ Checked directory: {directory}")
+        except Exception as e:
+            print(f"! Directory error {directory}: {e}")
+            raise
+
+# Add to main
 if __name__ == "__main__":
+    check_environment()
+    cleanup_files()
     cl.run()

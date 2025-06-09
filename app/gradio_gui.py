@@ -5,17 +5,19 @@ A Gradio-based web interface that provides AI-powered 3D model generation
 with intelligent memory management and natural language query capabilities.
 """
 
-import json
-import logging
 import os
-import shutil
-import sqlite3
 import sys
 import time
-from pathlib import Path
-from typing import Optional
-
+import logging
 import gradio as gr
+
+import json
+import shutil
+import sqlite3
+
+from pathlib import Path
+from typing import Optional, List
+
 import requests
 from PIL import Image
 
@@ -29,7 +31,6 @@ if parent_dir not in sys.path:
 from memory import MemoryManager, ConversationTracker, SemanticSearch
 from memory.semantic_search import SearchResult
 
-
 class AI3DGeneratorGUI:
     """
     Gradio-based GUI for AI 3D model generation with integrated memory system.
@@ -37,34 +38,11 @@ class AI3DGeneratorGUI:
     This class provides a web interface for generating 3D models from text prompts
     while maintaining a comprehensive memory system for storing, searching, and
     recalling previous generations using natural language queries.
-    
-    The interface supports both direct generation requests and memory-based queries,
-    allowing users to create variations of previous work and search through their
-    creation history using conversational language.
-    
-    Attributes:
-        api_url (str): URL of the AI generation API endpoint.
-        latest_image_path (Optional[str]): Path to the most recently generated image.
-        latest_model_path (Optional[str]): Path to the most recently generated 3D model.
-        downloads_dir (str): Directory for storing downloadable files.
-        memory_manager (MemoryManager): Core memory management system.
-        conversation_tracker (ConversationTracker): Natural language processing system.
-        semantic_search (SemanticSearch): Semantic search and retrieval system.
-        current_user_id (str): Identifier for the current user session.
-        current_session_id (str): Identifier for the current session.
-    
-    Example:
-        >>> gui = AI3DGeneratorGUI("http://localhost:8888")
-        >>> interface = gui.create_interface()
-        >>> interface.launch()
     """
 
     def __init__(self, api_url: str = "http://localhost:8888") -> None:
         """
         Initialize the AI 3D Generator GUI with memory system integration.
-        
-        Sets up the API connection, file management directories, and initializes
-        the complete memory system for local storage and retrieval.
         
         Args:
             api_url (str): URL of the AI generation API. Defaults to "http://localhost:8888".
@@ -88,57 +66,16 @@ class AI3DGeneratorGUI:
         
         logging.info("🧠 Memory system initialized for Gradio GUI (local only)")
 
-    def copy_files_for_download(self, image_path: Optional[str], model_path: Optional[str]) -> list:
+    def handle_memory_query(self, query: str, progress=gr.Progress()) -> tuple:
         """
-        Copy generated files to downloads directory for easy user access.
-        
-        Creates timestamped copies of generated files in the downloads directory
-        to provide users with easily accessible files for download and use.
-        
-        Args:
-            image_path (Optional[str]): Path to the generated image file.
-            model_path (Optional[str]): Path to the generated 3D model file.
-            
-        Returns:
-            list: List of download information strings describing copied files.
-        """
-        download_info = []
-        
-        if image_path and os.path.exists(image_path):
-            # Copy image to downloads with timestamp
-            image_name = f"generated_image_{int(time.time())}.png"
-            download_image_path = os.path.join(self.downloads_dir, image_name)
-            shutil.copy2(image_path, download_image_path)
-            download_info.append(f"Image: {download_image_path}")
-        
-        if model_path and os.path.exists(model_path):
-            # Copy model to downloads with timestamp and original extension
-            model_ext = os.path.splitext(model_path)[1]
-            model_name = f"generated_model_{int(time.time())}{model_ext}"
-            download_model_path = os.path.join(self.downloads_dir, model_name)
-            shutil.copy2(model_path, download_model_path)
-            download_info.append(f"3D Model: {download_model_path}")
-        
-        return download_info
-
-    def search_memories(self, query: str, progress=gr.Progress()) -> tuple:
-        """
-        Search through memory using natural language queries with progress tracking.
-        Enhanced to match Chainlit's robust memory handling logic.
-        
-        Args:
-            query (str): Natural language query for searching memories.
-            progress (gr.Progress): Gradio progress tracker for user feedback.
-            
-        Returns:
-            tuple: Contains (image_path, model_path, response_text, image_visibility, model_visibility)
-                for displaying search results in the Gradio interface.
+        Handle memory-related queries with comprehensive search and display.
+        Enhanced to match Chainlit's robust memory handling logic exactly.
         """
         try:
             progress(0.1, desc="🧠 Searching through your memories...")
             print(f"DEBUG: Memory query from user {self.current_user_id}: '{query}'")
             
-            # Parse the memory query using conversation tracker
+            # Parse the memory query
             parsed_query = self.conversation_tracker.parse_memory_query(query)
             print(f"DEBUG: Parsed query result: {parsed_query}")
             
@@ -157,14 +94,12 @@ DEBUG INFO:
                     gr.update(visible=False)
                 )
             
-            progress(0.3, desc="Building search parameters...")
-            
             search_query = self.conversation_tracker.build_search_query(parsed_query)
             print(f"DEBUG: Search query: {search_query}")
             
-            # Determine search strategy based on intent (matching Chainlit logic)
-            progress(0.5, desc="Executing search strategy...")
+            progress(0.3, desc="Executing search strategy...")
             
+            # Determine search strategy based on intent (exact Chainlit logic)
             if parsed_query['intent'] in ['recall', 'list']:
                 print("DEBUG: Using recent memories for recall/list intent")
                 recent_memories = self.memory_manager.get_recent_memories(self.current_user_id, limit=10)
@@ -202,33 +137,30 @@ DEBUG INFO:
                         ) for mem in recent_memories
                     ]
             
-            print(f"DEBUG: Search returned {len(search_results)} results")
+            print(f"DEBUG: Found {len(search_results)} initial results")
             
             progress(0.7, desc="Processing search results...")
             
-            # Get full memory details and create response (matching Chainlit approach)
+            # Get full memory details and create response (exact Chainlit approach)
             if search_results:
                 memories = []
+                seen_prompts = set()  # Track unique prompts
                 
-                for result in search_results[:5]:  # Limit to 5 results
-                    print(f"DEBUG: Processing result: {result.memory_id}")
-                    # Get memory from database using the same approach as Chainlit
+                for result in search_results:
                     with sqlite3.connect(self.memory_manager.db_path) as conn:
                         cursor = conn.execute("SELECT * FROM memory_entries WHERE id = ?", (result.memory_id,))
                         row = cursor.fetchone()
-                        
                         if row:
                             memory = self.memory_manager._row_to_memory_entry(row)
-                            memories.append(memory)
-                            print(f"DEBUG: Found memory: {memory.original_prompt}")
-                        else:
-                            print(f"DEBUG: No database row found for memory_id: {result.memory_id}")
-                
-                progress(0.9, desc="Formatting response...")
+                            # Only add if we haven't seen this prompt before
+                            if memory.original_prompt.lower().strip() not in seen_prompts:
+                                memories.append(memory)
+                                seen_prompts.add(memory.original_prompt.lower().strip())
                 
                 # Format response using conversation tracker
                 response_text = self.conversation_tracker.format_memory_response(
-                    memories, parsed_query.get('intent', 'recall')
+                    memories,
+                    parsed_query.get('intent', 'recall')
                 )
                 
                 print(f"DEBUG: Final response with {len(memories)} memories")
@@ -238,11 +170,6 @@ DEBUG INFO:
                     latest_memory = memories[0]
                     display_image = latest_memory.image_path if latest_memory.image_path and os.path.exists(latest_memory.image_path) else None
                     display_model = latest_memory.model_path if latest_memory.model_path and os.path.exists(latest_memory.model_path) else None
-                    
-                    if display_image:
-                        print(f"DEBUG: Displaying image: {display_image}")
-                    if display_model:
-                        print(f"DEBUG: Displaying model: {display_model}")
                     
                     progress(1.0, desc="Memory search complete!")
                     
@@ -284,105 +211,58 @@ DEBUG INFO:
                 gr.update(visible=False)
             )
 
-    def debug_memory_direct(self) -> str:
+    def handle_generation(self, prompt: str, reference_memory_id: Optional[str] = None, progress=gr.Progress()) -> tuple:
         """
-        Direct memory test bypassing conversation tracker for debugging.
-        Similar to Chainlit's debug_memory_direct function.
+        Handle 3D model generation with memory integration and file management.
+        Enhanced to match Chainlit's exact generation logic.
+        """
+        start_time = time.time()
         
-        Returns:
-            str: Debug information about memory system state.
-        """
         try:
-            print(f"DEBUG: Direct memory test for user: {self.current_user_id}")
-            recent_memories = self.memory_manager.get_recent_memories(self.current_user_id, limit=5)
+            progress(0.1, desc=f"🎯 Generating: {prompt}")
             
-            if recent_memories:
-                response_text = f"Found {len(recent_memories)} memories:\n\n"
-                
-                for i, memory in enumerate(recent_memories, 1):
-                    timestamp = time.strftime("%Y-%m-%d %H:%M", time.localtime(memory.timestamp))
-                    response_text += f"{i}. {memory.original_prompt} ({timestamp})\n"
-                    
-                    if memory.image_path and os.path.exists(memory.image_path):
-                        response_text += f"   └── Image: {memory.image_path}\n"
-                    
-                    if memory.model_path and os.path.exists(memory.model_path):
-                        response_text += f"   └── Model: {memory.model_path}\n"
-                
-                return response_text
-            else:
-                return f"No memories found for user: {self.current_user_id}"
-                
-        except Exception as e:
-            print(f"DEBUG: Direct memory test error: {e}")
-            import traceback
-            traceback.print_exc()
-            return f"Direct memory test failed: {str(e)}"
-
-    def generate_3d_model(self, prompt: str, progress=gr.Progress()) -> tuple:
-        """
-        Generate 3D model through API with memory integration and progress tracking.
-        Enhanced to properly handle memory queries like Chainlit version.
-        
-        Args:
-            prompt (str): User input prompt for generation or memory query.
-            progress (gr.Progress): Gradio progress tracker for user feedback.
-            
-        Returns:
-            tuple: Contains (image_path, model_path, status_message, image_visibility, model_visibility)
-                for displaying results in the Gradio interface.
-        """
-        try:
-            progress(0.1, desc="Analyzing input...")
-            
-            # Parse input to determine if it's a memory query (matching Chainlit logic)
-            parsed_query = self.conversation_tracker.parse_memory_query(prompt)
-            print(f"DEBUG: Input '{prompt}' parsed as: {parsed_query}")
-            
-            if parsed_query['is_memory_query'] and parsed_query['intent'] in ['recall', 'list']:
-                print("DEBUG: Routing to memory query handler")
-                return self.search_memories(prompt, progress)
-            
-            # Continue with generation logic
-            progress(0.2, desc="Getting memory context...")
-            
-            # Get memory context for prompt enhancement (matching Chainlit approach)
+            # Build memory context for enhanced generation (exact Chainlit logic)
             memory_context = []
-            enhanced_prompt = prompt  # Default to original prompt
+            seen_prompts = set()
             
-            # Build memory context for enhanced generation
-            search_results = self.semantic_search.semantic_search(prompt, self.current_user_id, limit=3)
-            for result in search_results:
-                memories = self.memory_manager.search_memories(
-                    result.matched_content, self.current_user_id, limit=1
-                )
-                memory_context.extend(memories)
+            if reference_memory_id:
+                with sqlite3.connect(self.memory_manager.db_path) as conn:
+                    cursor = conn.execute("SELECT * FROM memory_entries WHERE id = ?", (reference_memory_id,))
+                    row = cursor.fetchone()
+                    if row:
+                        memory = self.memory_manager._row_to_memory_entry(row)
+                        memory_context.append(memory)
+                        seen_prompts.add(memory.original_prompt.lower().strip())
+            else:
+                search_results = self.semantic_search.semantic_search(prompt, self.current_user_id, limit=3)
+                for result in search_results:
+                    memories = self.memory_manager.search_memories(result.matched_content, self.current_user_id, limit=1)
+                    for memory in memories:
+                        if memory.original_prompt.lower().strip() not in seen_prompts:
+                            memory_context.append(memory)
+                            seen_prompts.add(memory.original_prompt.lower().strip())
             
+            # Create enhanced prompt with memory context
+            enhanced_prompt = prompt
             if memory_context:
                 context_prompts = [mem.original_prompt for mem in memory_context[:2]]
                 enhanced_prompt = f"{prompt} (inspired by: {', '.join(context_prompts)})"
             
-            progress(0.3, desc="Calling AI pipeline...")
+            progress(0.3, desc="Calling API for generation...")
             
-            # Use exact original schema - only send prompt
-            api_payload = {
-                "prompt": enhanced_prompt  # Use enhanced prompt but keep original API schema
-            }
-            
-            # Call API with exact original format
             response = requests.post(
                 f"{self.api_url}/execution",
-                json=api_payload,
-                timeout=300  # Match Chainlit timeout
+                json={"prompt": enhanced_prompt},
+                timeout=300
             )
             
-            progress(0.8, desc="Processing results...")
+            progress(0.6, desc="Processing results and storing in memory...")
             
             if response.status_code == 200:
                 result = response.json()
                 message = result.get("message", "Generation completed")
                 
-                # Find generated files in outputs directory
+                # Find generated files (exact Chainlit logic)
                 image_files = []
                 model_files = []
                 
@@ -393,29 +273,51 @@ DEBUG INFO:
                         elif file.endswith(('.glb', '.obj', '.ply', '.stl')):
                             model_files.append(f"outputs/{file}")
                 
-                progress(0.9, desc="Storing in memory...")
+                latest_image = max(image_files, key=os.path.getctime) if image_files else None
+                latest_model = max(model_files, key=os.path.getctime) if model_files else None
                 
-                # Get latest files based on creation time
-                latest_image = None
-                latest_model = None
+                timestamp = int(time.time())
+                download_info = []
                 
-                if image_files:
-                    latest_image = max(image_files, key=os.path.getctime)
-                    self.latest_image_path = latest_image
+                # Process image file (exact Chainlit logic)
+                image_path = None
+                if latest_image and os.path.exists(latest_image):
+                    ext = os.path.splitext(latest_image)[1] or '.png'
+                    image_filename = f"image_{timestamp}{ext}"
+                    image_path = os.path.join(self.downloads_dir, image_filename)
+                    
+                    copied_image_path = self.copy_file_safely(latest_image, image_path)
+                    if copied_image_path and self.verify_file_permissions(copied_image_path):
+                        print(f"DEBUG: Successfully copied image to {copied_image_path}")
+                        download_info.append(f"🖼️ **Image:** `{image_filename}`")
+                    else:
+                        print(f"DEBUG: Failed to copy or verify image file: {latest_image}")
                 
-                if model_files:
-                    latest_model = max(model_files, key=os.path.getctime)
-                    self.latest_model_path = latest_model
+                # Process 3D model file (exact Chainlit logic)
+                model_path = None
+                if latest_model and os.path.exists(latest_model):
+                    proper_ext = self.get_proper_extension(latest_model)
+                    model_filename = f"model_{timestamp}{proper_ext}"
+                    model_path = os.path.join(self.downloads_dir, model_filename)
+                    
+                    copied_model_path = self.copy_file_safely(latest_model, model_path)
+                    if copied_model_path and self.verify_file_permissions(copied_model_path):
+                        print(f"DEBUG: Successfully copied model to {copied_model_path}")
+                        file_size = os.path.getsize(copied_model_path)
+                        download_info.append(f"🗿 **3D Model:** `{model_filename}`")
+                        download_info.append(f"   └── Size: {file_size:,} bytes")
+                        download_info.append(f"   └── Format: {proper_ext.upper()}")
+                    else:
+                        print(f"DEBUG: Failed to copy or verify model file: {latest_model}")
                 
-                # Store generation in memory (completely local) - matching Chainlit metadata
+                # Store in memory system (exact Chainlit logic)
                 try:
                     memory_metadata = {
                         'generation_time': time.time(),
-                        'processing_time': time.time() - time.time(),  # Will be updated
-                        'reference_memory_id': None,
+                        'processing_time': time.time() - start_time,
+                        'reference_memory_id': reference_memory_id,
                         'memory_context_used': len(memory_context) > 0,
-                        'api_response': message,
-                        'interface': 'gradio'
+                        'api_response': message
                     }
                     
                     memory_id = self.memory_manager.store_generation(
@@ -423,99 +325,142 @@ DEBUG INFO:
                         user_id=self.current_user_id,
                         original_prompt=prompt,
                         enhanced_prompt=enhanced_prompt,
-                        image_path=latest_image,
-                        model_path=latest_model,
+                        image_path=image_path,
+                        model_path=model_path,
                         metadata=memory_metadata
                     )
                     
-                    # Add to semantic search index for future searches
-                    self.semantic_search.add_memory_embedding(
-                        memory_id, f"{prompt} {enhanced_prompt}"
-                    )
-                    
+                    self.semantic_search.add_memory_embedding(memory_id, f"{prompt} {enhanced_prompt}")
                     print(f"DEBUG: Stored memory with ID: {memory_id}")
-                    logging.info(f"💾 Stored generation in memory: {memory_id}")
-                    
                 except Exception as e:
                     print(f"Failed to store in memory: {e}")
                     import traceback
                     traceback.print_exc()
-                    logging.error(f"Failed to store in memory: {e}")
                 
-                # Copy files for download
-                download_info = self.copy_files_for_download(latest_image, latest_model)
-                download_text = "\n".join(download_info) if download_info else "No files generated"
+                total_time = int(time.time() - start_time)
                 
-                progress(1.0, desc="Complete!")
-                
-                # Enhanced status message with memory info (matching Chainlit style)
-                status_message = f"""✅ Generation Complete!
+                # Create success message (exact Chainlit format)
+                success_content = f"""## ✅ Generation Complete! ({total_time}s)
 
 **Prompt:** "{prompt}"
 **Memory Context:** {len(memory_context)} relevant memories used
 
 **Generated Files:**
-{download_text}
+{chr(10).join(download_info)}
 
-**💾 Memory:** This creation has been stored and can be recalled using natural language queries!
+**Downloads:** Files saved to downloads directory
+**Location:** `{os.path.abspath(self.downloads_dir)}`
 
-**Memory Commands:**
-- "Show me what I created yesterday"
-- "Find my robot creations"  
-- "Create something like my last dragon"
-- "List my recent work"
+**💾 Memory:** This creation has been stored and can be recalled later!"""
 
-**Downloads Location:** `{os.path.abspath(self.downloads_dir)}`"""
+                progress(1.0, desc="Generation complete!")
                 
-                # Return results for Gradio interface
                 return (
-                    latest_image,
-                    latest_model if latest_model and latest_model.endswith('.glb') else None,
-                    status_message,
-                    gr.update(visible=bool(latest_image)),
-                    gr.update(visible=bool(latest_model))
+                    image_path,
+                    model_path,
+                    success_content,
+                    gr.update(visible=bool(image_path)),
+                    gr.update(visible=bool(model_path))
                 )
+                
             else:
-                return (
-                    None,
-                    None,
-                    f"❌ Generation Failed\n\n**Error:** HTTP {response.status_code}\n**Response:** {response.text[:200]}\n\n**Your API is running but returned an error. Check the server logs.**",
-                    gr.update(visible=False),
-                    gr.update(visible=False)
-                )
+                error_text = f"""## ❌ Generation Failed
+
+**Error:** HTTP {response.status_code}
+**Response:** {response.text[:200]}
+
+**Your API is running but returned an error. Check the server logs.**"""
+                
+                return (None, None, error_text, gr.update(visible=False), gr.update(visible=False))
                 
         except requests.exceptions.ConnectionError:
-            return (
-                None,
-                None,
-                f"❌ Connection Failed\n\n**Error:** Cannot connect to API server at {self.api_url}\n\n**Please check:**\n1. Is your API server running?\n2. Try: `python main.py` to start the server",
-                gr.update(visible=False),
-                gr.update(visible=False)
-            )
-        except requests.exceptions.Timeout:
-            return (
-                None,
-                None,
-                "❌ Request timed out (>5 minutes)",
-                gr.update(visible=False),
-                gr.update(visible=False)
-            )
+            error_text = f"""## ❌ Connection Failed
+
+**Error:** Cannot connect to API server at {self.api_url}
+
+**Please check:**
+1. Is your API server running?
+2. Try: `python main.py` to start the server"""
+            
+            return (None, None, error_text, gr.update(visible=False), gr.update(visible=False))
+            
         except Exception as e:
-            return (
-                None,
-                None,
-                f"❌ Generation Failed\n\n**Error:** {str(e)}\n\n**Memory Commands still work:**\n- \"Show me my recent creations\"\n- \"Find my robot from yesterday\"",
-                gr.update(visible=False),
-                gr.update(visible=False)
-            )
+            error_text = f"""## ❌ Generation Failed
+
+**Error:** {str(e)}
+
+**Memory Commands still work:**
+- "Show me my recent creations"
+- "Find my robot from yesterday\""""
+            
+            return (None, None, error_text, gr.update(visible=False), gr.update(visible=False))
+
+    def process_input(self, prompt: str, progress=gr.Progress()) -> tuple:
+        """
+        Main input handler that routes to generation or memory query.
+        Enhanced to match Chainlit's exact routing logic.
+        """
+        # Parse input to determine if it's a memory query (exact Chainlit logic)
+        parsed_query = self.conversation_tracker.parse_memory_query(prompt)
+        print(f"DEBUG: Input '{prompt}' parsed as: {parsed_query}")
+        
+        if parsed_query['is_memory_query'] and parsed_query['intent'] in ['recall', 'list']:
+            return self.handle_memory_query(prompt, progress)
+        else:
+            return self.handle_generation(prompt, None, progress)
+
+    def get_proper_extension(self, file_path: str) -> str:
+        """
+        Determine the proper file extension for 3D model files.
+        Exact copy from Chainlit implementation.
+        """
+        try:
+            with open(file_path, 'rb') as f:
+                header = f.read(12)
+                if header[:4] == b'glTF':
+                    return '.glb'
+                else:
+                    f.seek(0)
+                    try:
+                        content = f.read(500).decode('utf-8', errors='ignore')
+                        if '"asset"' in content and '"version"' in content and '"generator"' in content:
+                            return '.gltf'
+                    except:
+                        pass
+                    return '.glb'
+        except Exception:
+            return '.gltf'
+
+    def verify_file_permissions(self, filepath: str) -> bool:
+        """Verify file exists and is accessible. Exact copy from Chainlit."""
+        try:
+            if not os.path.exists(filepath):
+                return False
+            # Check read permissions
+            with open(filepath, 'rb') as f:
+                f.read(1)
+            return True
+        except Exception as e:
+            print(f"File access error {filepath}: {e}")
+            return False
+
+    def copy_file_safely(self, src: str, dest: str) -> Optional[str]:
+        """Safely copy a file with permission checks. Exact copy from Chainlit."""
+        try:
+            if src and self.verify_file_permissions(src):
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                shutil.copy2(src, dest)
+                # Ensure copied file is readable
+                os.chmod(dest, 0o644)
+                return dest if self.verify_file_permissions(dest) else None
+        except Exception as e:
+            print(f"Error copying file {src} to {dest}: {e}")
+        return None
 
     def get_recent_memories(self) -> str:
         """
         Get recent memories for display in the interface.
         Enhanced with better error handling and debug info.
-        
-        Returns:
-            str: Formatted string containing recent memory information.
         """
         try:
             recent_memories = self.memory_manager.get_recent_memories(
@@ -531,9 +476,7 @@ DEBUG INFO:
                 memory_text += f"\n**Total memories for user {self.current_user_id}: {len(recent_memories)}**"
                 return memory_text
             else:
-                # Debug info when no memories found
-                debug_info = self.debug_memory_direct()
-                return f"No recent memories found. Create something to get started!\n\n**Debug Info:**\n{debug_info}"
+                return "No recent memories found. Create something to get started!"
                 
         except Exception as e:
             print(f"Error loading memories: {e}")
@@ -544,12 +487,6 @@ DEBUG INFO:
     def create_similar_to_last(self) -> str:
         """
         Create a variation prompt based on the last creation.
-        
-        Retrieves the most recent creation and generates a variation prompt
-        for creating similar content with modifications.
-        
-        Returns:
-            str: Variation prompt based on the last creation, or error message.
         """
         try:
             recent_memories = self.memory_manager.get_recent_memories(
@@ -569,12 +506,6 @@ DEBUG INFO:
     def clear_outputs(self) -> tuple:
         """
         Clear all outputs and reset the interface state.
-        
-        Resets all interface elements to their initial state and clears
-        stored file paths for a fresh start.
-        
-        Returns:
-            tuple: Reset values for all interface elements.
         """
         self.latest_image_path = None
         self.latest_model_path = None
@@ -590,12 +521,7 @@ DEBUG INFO:
     def create_interface(self) -> gr.Blocks:
         """
         Create the comprehensive Gradio interface with memory integration.
-        
-        Builds a modern, responsive web interface with integrated memory system,
-        supporting both 3D model generation and natural language memory queries.
-        
-        Returns:
-            gr.Blocks: Configured Gradio interface ready for launch.
+        Enhanced to match Chainlit functionality exactly.
         """
         with gr.Blocks(
             title="AI 3D Generator with Memory",
@@ -823,7 +749,7 @@ DEBUG INFO:
             
             # Event handlers for user interactions
             generate_btn.click(
-                fn=self.generate_3d_model,
+                fn=self.process_input,  # Changed to use unified input handler
                 inputs=[prompt_input],
                 outputs=[
                     generated_image,
@@ -860,18 +786,34 @@ DEBUG INFO:
             interface.queue()
             return interface
 
+    def cleanup_old_files(self, max_age_days: int = 7) -> None:
+        """Remove files older than max_age_days."""
+        try:
+            now = time.time()
+            for directory in [self.downloads_dir, "outputs"]:
+                if os.path.exists(directory):
+                    for filename in os.listdir(directory):
+                        filepath = os.path.join(directory, filename)
+                        if os.path.isfile(filepath):
+                            if os.stat(filepath).st_mtime < now - max_age_days * 86400:
+                                try:
+                                    os.remove(filepath)
+                                    logging.info(f"Removed old file: {filepath}")
+                                except Exception as e:
+                                    logging.error(f"Failed to remove {filepath}: {e}")
+        except Exception as e:
+            logging.error(f"Cleanup error: {e}")
+
 
 def main() -> None:
     """
     Launch the Gradio interface with comprehensive memory system integration.
-    
-    Initializes the GUI, creates the interface, and launches the web server
-    with detailed logging and configuration information.
     """
     logging.basicConfig(level=logging.INFO)
     
     # Create GUI instance
     gui = AI3DGeneratorGUI()
+    gui.cleanup_old_files()
     
     # Create and launch interface
     interface = gui.create_interface()
