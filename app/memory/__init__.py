@@ -13,11 +13,11 @@ particularly for 3D model generation and text-to-image applications.
 """
 
 from .conversation_tracker import ConversationTracker
-from .memory_manager import MemoryManager
+from .memory_manager import MemoryManager, MemoryEntry  # Add MemoryEntry
 from .semantic_search import SemanticSearch
 
-# Public API exports
-__all__ = ['MemoryManager', 'ConversationTracker', 'SemanticSearch']
+# Update public API exports
+__all__ = ['MemoryManager', 'ConversationTracker', 'SemanticSearch', 'MemoryEntry']
 
 # Package metadata
 __version__ = "1.0.0"

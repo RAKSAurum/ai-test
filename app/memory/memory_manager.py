@@ -15,6 +15,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+import os
 
 
 @dataclass
@@ -64,6 +65,10 @@ class MemoryEntry:
             self.metadata = {}
         if self.tags is None:
             self.tags = []
+
+    def __repr__(self):
+        return f"<MemoryEntry id={self.id} prompt={self.original_prompt[:30]}...>"
+
 
 
 @dataclass
@@ -147,62 +152,72 @@ class MemoryManager:
         logging.info(f"🧠 Memory Manager initialized with database: {self.db_path}")
 
     def _init_database(self) -> None:
-        """
-        Initialize the SQLite database with required tables and indexes.
-        
-        Creates tables for memory entries, sessions, and memory associations
-        with appropriate indexes for optimal query performance.
-        """
+        """Initialize the SQLite database with required tables and indexes."""
         with sqlite3.connect(self.db_path) as conn:
-            conn.executescript("""
-                CREATE TABLE IF NOT EXISTS memory_entries (
-                    id TEXT PRIMARY KEY,
-                    session_id TEXT NOT NULL,
-                    user_id TEXT NOT NULL,
-                    timestamp REAL NOT NULL,
-                    memory_type TEXT NOT NULL,
-                    original_prompt TEXT NOT NULL,
-                    enhanced_prompt TEXT NOT NULL,
-                    image_path TEXT,
-                    model_path TEXT,
-                    video_path TEXT,
-                    metadata TEXT,
-                    tags TEXT,
-                    quality_score REAL DEFAULT 0.0,
-                    access_count INTEGER DEFAULT 0,
-                    last_accessed REAL,
-                    FOREIGN KEY (session_id) REFERENCES sessions (session_id)
-                );
-
-                CREATE TABLE IF NOT EXISTS sessions (
-                    session_id TEXT PRIMARY KEY,
-                    user_id TEXT NOT NULL,
-                    created_at REAL NOT NULL,
-                    last_activity REAL NOT NULL,
-                    context_buffer TEXT,
-                    total_generations INTEGER DEFAULT 0,
-                    session_metadata TEXT
-                );
-
-                CREATE TABLE IF NOT EXISTS memory_associations (
-                    id TEXT PRIMARY KEY,
-                    memory_id_1 TEXT NOT NULL,
-                    memory_id_2 TEXT NOT NULL,
-                    association_type TEXT NOT NULL,
-                    strength REAL DEFAULT 1.0,
-                    created_at REAL NOT NULL,
-                    FOREIGN KEY (memory_id_1) REFERENCES memory_entries (id),
-                    FOREIGN KEY (memory_id_2) REFERENCES memory_entries (id)
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_memory_timestamp ON memory_entries (timestamp);
-                CREATE INDEX IF NOT EXISTS idx_memory_session ON memory_entries (session_id);
-                CREATE INDEX IF NOT EXISTS idx_memory_user ON memory_entries (user_id);
-                CREATE INDEX IF NOT EXISTS idx_memory_type ON memory_entries (memory_type);
-                CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions (user_id);
-                CREATE INDEX IF NOT EXISTS idx_sessions_activity ON sessions (last_activity);
+            # Add version tracking
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS schema_version (
+                    version INTEGER PRIMARY KEY,
+                    applied_at REAL NOT NULL
+                )
             """)
-            conn.commit()
+            
+            # Check current version
+            cursor = conn.execute("SELECT MAX(version) FROM schema_version")
+            current_version = cursor.fetchone()[0] or 0
+            
+            if current_version < 1:
+                # Apply initial schema
+                conn.executescript("""
+                    CREATE TABLE IF NOT EXISTS memory_entries (
+                        id TEXT PRIMARY KEY,
+                        session_id TEXT NOT NULL,
+                        user_id TEXT NOT NULL,
+                        timestamp REAL NOT NULL,
+                        memory_type TEXT NOT NULL,
+                        original_prompt TEXT NOT NULL,
+                        enhanced_prompt TEXT NOT NULL,
+                        image_path TEXT,
+                        model_path TEXT,
+                        video_path TEXT,
+                        metadata TEXT,
+                        tags TEXT,
+                        quality_score REAL DEFAULT 0.0,
+                        access_count INTEGER DEFAULT 0,
+                        last_accessed REAL,
+                        FOREIGN KEY (session_id) REFERENCES sessions (session_id)
+                    );
+
+                    CREATE TABLE IF NOT EXISTS sessions (
+                        session_id TEXT PRIMARY KEY,
+                        user_id TEXT NOT NULL,
+                        created_at REAL NOT NULL,
+                        last_activity REAL NOT NULL,
+                        context_buffer TEXT,
+                        total_generations INTEGER DEFAULT 0,
+                        session_metadata TEXT
+                    );
+
+                    CREATE TABLE IF NOT EXISTS memory_associations (
+                        id TEXT PRIMARY KEY,
+                        memory_id_1 TEXT NOT NULL,
+                        memory_id_2 TEXT NOT NULL,
+                        association_type TEXT NOT NULL,
+                        strength REAL DEFAULT 1.0,
+                        created_at REAL NOT NULL,
+                        FOREIGN KEY (memory_id_1) REFERENCES memory_entries (id),
+                        FOREIGN KEY (memory_id_2) REFERENCES memory_entries (id)
+                    );
+
+                    CREATE INDEX IF NOT EXISTS idx_memory_timestamp ON memory_entries (timestamp);
+                    CREATE INDEX IF NOT EXISTS idx_memory_session ON memory_entries (session_id);
+                    CREATE INDEX IF NOT EXISTS idx_memory_user ON memory_entries (user_id);
+                    CREATE INDEX IF NOT EXISTS idx_memory_type ON memory_entries (memory_type);
+                    CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions (user_id);
+                    CREATE INDEX IF NOT EXISTS idx_sessions_activity ON sessions (last_activity);
+                """)
+                conn.execute("INSERT INTO schema_version VALUES (1, ?)", (time.time(),))
+                conn.commit()
 
     def _load_active_sessions(self) -> None:
         """
@@ -493,6 +508,36 @@ class MemoryManager:
             conn.commit()
         
         logging.info(f"🧹 Cleaned up {len(to_remove)} old sessions")
+
+    def cleanup_old_memories(self, days: int = 30) -> None:
+        """Clean up memories older than specified days."""
+        try:
+            cutoff_time = time.time() - (days * 24 * 60 * 60)
+            
+            with sqlite3.connect(self.db_path) as conn:
+                # Get files to delete
+                cursor = conn.execute("""
+                    SELECT image_path, model_path, video_path 
+                    FROM memory_entries 
+                    WHERE timestamp < ?
+                """, (cutoff_time,))
+                
+                # Delete physical files
+                for row in cursor.fetchall():
+                    for path in row:
+                        if path and os.path.exists(path):
+                            try:
+                                os.remove(path)
+                                logging.info(f"Removed old file: {path}")
+                            except OSError as e:
+                                logging.error(f"Failed to remove file {path}: {e}")
+                
+                # Delete database entries
+                conn.execute("DELETE FROM memory_entries WHERE timestamp < ?", (cutoff_time,))
+                conn.commit()
+                
+        except Exception as e:
+            logging.error(f"Memory cleanup failed: {e}")
 
     def _extract_tags(self, original_prompt: str, enhanced_prompt: str) -> List[str]:
         """

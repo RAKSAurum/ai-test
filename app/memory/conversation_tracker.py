@@ -5,8 +5,10 @@ Handles conversation flow, context maintenance, and natural language
 understanding for memory queries in AI applications.
 """
 
+import json
 import logging
 import re
+import sqlite3
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -417,3 +419,23 @@ class ConversationTracker:
             response_parts.append(f"\n... and {len(memories) - 5} more results")
         
         return ''.join(response_parts)
+
+    def cleanup_old_sessions(self) -> None:
+        """Remove old session data to prevent memory leaks."""
+        try:
+            current_time = time.time()
+            day_ago = current_time - (24 * 60 * 60)
+            
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute("""
+                    DELETE FROM sessions 
+                    WHERE last_activity < ? AND session_id NOT IN (
+                        SELECT DISTINCT session_id FROM memory_entries
+                        WHERE timestamp > ?
+                    )
+                """, (day_ago, day_ago))
+                conn.commit()
+                
+            logging.info("Session cleanup completed")
+        except Exception as e:
+            logging.error(f"Session cleanup failed: {e}")

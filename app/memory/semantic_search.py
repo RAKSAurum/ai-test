@@ -45,6 +45,9 @@ class SearchResult:
         match_type (str): Type of match ('semantic', 'keyword', 'temporal').
         matched_content (str): The content that matched the search query.
     """
+    def __repr__(self):
+        return f"<SearchResult id={self.memory_id} score={self.relevance_score:.2f} type={self.match_type}>"
+
     memory_id: str
     relevance_score: float
     match_type: str  # 'semantic', 'keyword', 'temporal'
@@ -114,22 +117,19 @@ class SemanticSearch:
             logging.info("🔍 Semantic search initialized with keyword fallback")
 
     def _initialize_vector_index(self) -> None:
-        """
-        Initialize FAISS vector index for efficient similarity search.
-        
-        Creates a FAISS index optimized for cosine similarity and loads
-        existing embeddings from the database to maintain search continuity.
-        """
+        """Initialize FAISS vector index for efficient similarity search."""
         try:
-            # Create FAISS index for inner product (cosine similarity)
-            self.index = faiss.IndexFlatIP(self.embedding_dim)
+            if not EMBEDDINGS_AVAILABLE:
+                logging.warning("Skipping vector index initialization - embeddings not available")
+                return
             
-            # Load existing embeddings from database
+            self.index = faiss.IndexFlatIP(self.embedding_dim)
             self._load_existing_embeddings()
             
         except Exception as e:
-            logging.error(f"❌ Failed to initialize vector index: {e}")
+            logging.error(f"Failed to initialize vector index: {e}")
             self.index = None
+            self.embeddings_available = False
 
     def _load_existing_embeddings(self) -> None:
         """
@@ -373,6 +373,27 @@ class SemanticSearch:
         except Exception as e:
             logging.error(f"❌ Keyword search failed: {e}")
             return []
+        
+    def get_fallback_memories(self, user_id: str, limit: int = 5) -> List[SearchResult]:
+        memories = []
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.execute(
+                    "SELECT id, original_prompt FROM memory_entries WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?",
+                    (user_id, limit)
+                )
+                for row in cursor.fetchall():
+                    memory_id, original_prompt = row
+                    memories.append(SearchResult(
+                        memory_id=memory_id,
+                        relevance_score=1.0,
+                        match_type="recent_fallback",
+                        matched_content=original_prompt
+                    ))
+        except Exception as e:
+            logging.error(f"⚠️ Fallback memory fetch failed: {e}")
+        return memories
+
 
     def temporal_search(self, user_id: str, time_range: Tuple[float, float], 
                        limit: int = 10) -> List[SearchResult]:
