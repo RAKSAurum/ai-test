@@ -41,6 +41,34 @@ log_error() {
     echo -e "${RED}❌ $1${NC}" >&2
 }
 
+# Check and request elevated permissions
+check_and_elevate_permissions() {
+    log_info "Checking file system permissions..."
+    
+    # Check if running as root
+    if [[ $EUID -eq 0 ]]; then
+        log_success "Running with elevated permissions"
+        return 0
+    fi
+    
+    # Test write access to system directories
+    if [[ ! -w "/usr/local" ]] || [[ ! -w "/opt" ]]; then
+        log_warning "Limited file system access detected"
+        echo ""
+        echo "🔐 This script requires elevated permissions for full file system access."
+        echo "   Re-running with sudo while preserving environment..."
+        echo ""
+        
+        # Get the absolute path of the current script
+        SCRIPT_PATH="$(readlink -f "$0")"
+        
+        # Re-run script with sudo while preserving environment
+        exec sudo -E bash "$SCRIPT_PATH" "$@"
+    fi
+    
+    log_success "Sufficient file system permissions available"
+}
+
 # Enhanced startup banner with project information
 print_startup_banner() {
     echo "🚀 Starting ${PROJECT_NAME}..."
@@ -141,6 +169,18 @@ check_directory() {
 check_virtual_environment() {
     log_info "Checking virtual environment..."
     
+    # If running as root, check for preserved VIRTUAL_ENV or look for .venv
+    if [[ $EUID -eq 0 ]]; then
+        if [[ -n "${VIRTUAL_ENV:-}" ]]; then
+            log_success "Virtual environment preserved: ${VIRTUAL_ENV}"
+            return 0
+        elif [[ -d "../.venv" ]]; then
+            log_info "Virtual environment detected but not active under sudo"
+            log_success "Continuing with root permissions (virtual environment will be managed by Poetry)"
+            return 0
+        fi
+    fi
+    
     if [[ -z "${VIRTUAL_ENV:-}" ]]; then
         log_error "Virtual environment not activated"
         echo ""
@@ -159,19 +199,45 @@ check_virtual_environment() {
 check_poetry_installation() {
     log_info "Checking Poetry installation..."
     
-    if ! command -v poetry &> /dev/null; then
-        log_error "Poetry not found. Poetry is required for dependency management."
-        echo ""
-        echo "📦 Install Poetry using:"
-        echo "   pip install poetry"
-        echo ""
-        echo "After installation, run this script again."
-        exit 1
+    # First try to find poetry in the current PATH
+    if command -v poetry &> /dev/null; then
+        local poetry_version
+        poetry_version=$(poetry --version 2>/dev/null | cut -d' ' -f3 || echo "unknown")
+        log_success "Poetry found in PATH (version: ${poetry_version})"
+        return 0
     fi
     
-    local poetry_version
-    poetry_version=$(poetry --version 2>/dev/null | cut -d' ' -f3 || echo "unknown")
-    log_success "Poetry found (version: ${poetry_version})"
+    # If not found and we have a virtual environment, try looking there
+    if [[ -n "${VIRTUAL_ENV:-}" ]] && [[ -f "${VIRTUAL_ENV}/bin/poetry" ]]; then
+        # Add virtual environment to PATH temporarily
+        export PATH="${VIRTUAL_ENV}/bin:${PATH}"
+        local poetry_version
+        poetry_version=$(poetry --version 2>/dev/null | cut -d' ' -f3 || echo "unknown")
+        log_success "Poetry found in virtual environment (version: ${poetry_version})"
+        return 0
+    fi
+    
+    # Try looking in common virtual environment locations
+    local venv_paths=("../.venv/bin/poetry" "./.venv/bin/poetry" "../.venv/bin/poetry")
+    for venv_poetry in "${venv_paths[@]}"; do
+        if [[ -f "$venv_poetry" ]]; then
+            # Add the directory to PATH
+            local venv_bin_dir="$(dirname "$venv_poetry")"
+            export PATH="${venv_bin_dir}:${PATH}"
+            local poetry_version
+            poetry_version=$(poetry --version 2>/dev/null | cut -d' ' -f3 || echo "unknown")
+            log_success "Poetry found in virtual environment (version: ${poetry_version})"
+            return 0
+        fi
+    done
+    
+    log_error "Poetry not found. Poetry is required for dependency management."
+    echo ""
+    echo "📦 Install Poetry using:"
+    echo "   pip install poetry"
+    echo ""
+    echo "After installation, run this script again."
+    exit 1
 }
 
 # Enhanced Python version validation
@@ -385,6 +451,7 @@ main() {
     
     # Execute startup sequence
     print_startup_banner
+    check_and_elevate_permissions
     check_directory
     check_virtual_environment
     check_poetry_installation
