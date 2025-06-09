@@ -9,11 +9,12 @@ set -u  # Exit on undefined variables
 
 # Configuration variables
 readonly SCRIPT_NAME="$(basename "$0")"
-readonly PROJECT_NAME="AI Developer Challenge Application"
+readonly PROJECT_NAME="AI 3D Generator with Intelligent Memory System"
 readonly PROJECT_VERSION="core v1.0"
 readonly REQUIRED_PYTHON_MIN="3.9"
-readonly REQUIRED_PYTHON_MAX="4.0"
-readonly APPLICATION_PORT="8888"
+readonly REQUIRED_PYTHON_MAX="3.11"
+readonly API_PORT="8888"
+readonly GUI_PORT="7860"
 readonly APPLICATION_ENTRY="ignite.py"
 
 # Color codes for enhanced output
@@ -46,22 +47,125 @@ print_startup_banner() {
     echo "📋 Project: ${PROJECT_VERSION} - AI Skills Demonstration"
     echo "🔧 Script: ${SCRIPT_NAME}"
     echo "📅 Started: $(date '+%Y-%m-%d %H:%M:%S')"
+    echo "📍 Location: ai-test/app/"
     echo "----------------------------------------"
 }
 
-# Comprehensive Poetry installation check with installation guidance
+# Parse command line arguments for GUI selection
+parse_arguments() {
+    case "${1:-}" in
+        --gui=chainlit|chainlit)
+            export GUI_MODE="chainlit"
+            log_info "GUI mode set to Chainlit via command line"
+            ;;
+        --gui=gradio|gradio)
+            export GUI_MODE="gradio"
+            log_info "GUI mode set to Gradio via command line"
+            ;;
+        --help|-h)
+            echo "Usage: $0 [chainlit|gradio|--gui=chainlit|--gui=gradio]"
+            echo ""
+            echo "Options:"
+            echo "  chainlit, --gui=chainlit    Launch with Chainlit GUI"
+            echo "  gradio, --gui=gradio        Launch with Gradio GUI"
+            echo "  --help, -h                  Show this help message"
+            echo ""
+            echo "Interactive mode:"
+            echo "  $0                          Prompt for GUI selection"
+            exit 0
+            ;;
+        "")
+            # No argument provided, will prompt user
+            ;;
+        *)
+            log_warning "Unknown argument: $1. Will prompt for GUI selection."
+            ;;
+    esac
+}
+
+# GUI selection function for interactive mode
+select_gui_mode() {
+    # Skip if GUI_MODE already set via command line
+    if [[ -n "${GUI_MODE:-}" ]]; then
+        return 0
+    fi
+    
+    log_info "GUI Selection"
+    echo ""
+    echo "🎛️  Choose your preferred GUI interface:"
+    echo "   1) Chainlit GUI (conversational interface with memory)"
+    echo "   2) Gradio GUI (visual interface with memory capabilities)"
+    echo ""
+    echo -n "Enter your choice (1 or 2) [default: 1]: "
+    
+    read -r gui_choice
+    
+    case "${gui_choice}" in
+        1|""|chainlit)
+            export GUI_MODE="chainlit"
+            log_success "Selected: Chainlit GUI"
+            ;;
+        2|gradio)
+            export GUI_MODE="gradio"
+            log_success "Selected: Gradio GUI"
+            ;;
+        *)
+            log_warning "Invalid choice. Defaulting to Chainlit GUI"
+            export GUI_MODE="chainlit"
+            ;;
+    esac
+    echo ""
+}
+
+# Check if we're in the correct directory (ai-test/app/)
+check_directory() {
+    log_info "Verifying script location..."
+    
+    # Check if we're in the app directory
+    if [[ ! -f "pyproject.toml" ]] || [[ ! -f "ignite.py" ]]; then
+        log_error "Script must be run from ai-test/app/ directory"
+        echo ""
+        echo "📍 Current directory: $(pwd)"
+        echo "📋 Expected files: pyproject.toml, ignite.py"
+        echo ""
+        echo "🔧 To fix this:"
+        echo "   cd ai-test/app"
+        echo "   bash start.sh"
+        exit 1
+    fi
+    
+    log_success "Running from correct directory: ai-test/app/"
+}
+
+# Check if virtual environment is activated
+check_virtual_environment() {
+    log_info "Checking virtual environment..."
+    
+    if [[ -z "${VIRTUAL_ENV:-}" ]]; then
+        log_error "Virtual environment not activated"
+        echo ""
+        echo "🔧 Please activate your virtual environment first:"
+        echo "   cd ai-test"
+        echo "   source .venv/bin/activate"
+        echo "   cd app"
+        echo "   bash start.sh"
+        exit 1
+    fi
+    
+    log_success "Virtual environment active: ${VIRTUAL_ENV}"
+}
+
+# Comprehensive Poetry installation check
 check_poetry_installation() {
     log_info "Checking Poetry installation..."
     
     if ! command -v poetry &> /dev/null; then
         log_error "Poetry not found. Poetry is required for dependency management."
         echo ""
-        echo "📦 Install Poetry using one of these methods:"
-        echo "   Method 1 (Recommended): curl -sSL https://install.python-poetry.org | python3 -"
-        echo "   Method 2 (pip): pip install --user poetry"
-        echo "   Method 3 (Homebrew): brew install poetry"
+        echo "📦 Install Poetry using:"
+        echo "   pip install poetry"
         echo ""
-        echo "After installation, restart your terminal and run this script again."
+        echo "After installation, run this script again."
         exit 1
     fi
     
@@ -70,144 +174,154 @@ check_poetry_installation() {
     log_success "Poetry found (version: ${poetry_version})"
 }
 
-# Enhanced Python version validation with detailed compatibility checking
+# Enhanced Python version validation
 validate_python_version() {
     log_info "Validating Python version compatibility..."
     
-    # Check if python3 is available
     if ! command -v python3 &> /dev/null; then
-        log_error "python3 command not found. Please install Python 3.9 or higher."
+        log_error "python3 command not found. Please install Python 3.9-3.10."
         exit 1
     fi
     
-    # Get detailed Python version information
     local python_version
     python_version=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}')")
-    local python_major_minor
-    python_major_minor=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
     
     echo "🐍 Python version: ${python_version}"
     
-    # Validate version range (>=3.9,<4.0)
-    if ! python3 -c "import sys; exit(0 if sys.version_info >= (3,9) and sys.version_info < (4,0) else 1)" 2>/dev/null; then
+    # Validate version range (>=3.9,<3.11)
+    if ! python3 -c "import sys; exit(0 if sys.version_info >= (3,9) and sys.version_info < (3,11) else 1)" 2>/dev/null; then
         log_error "Python version ${python_version} is not compatible."
         echo ""
         echo "📋 Requirements:"
         echo "   - Minimum: Python ${REQUIRED_PYTHON_MIN}"
         echo "   - Maximum: Python ${REQUIRED_PYTHON_MAX} (exclusive)"
         echo "   - Current: Python ${python_version}"
-        echo ""
-        echo "Please install a compatible Python version and try again."
         exit 1
     fi
     
     log_success "Python version ${python_version} is compatible"
 }
 
-# Robust dependency installation with error handling and progress feedback
+# Install dependencies following README procedure
 install_dependencies() {
     log_info "Installing project dependencies with Poetry..."
     
-    # Check if pyproject.toml exists
     if [[ ! -f "pyproject.toml" ]]; then
-        log_error "pyproject.toml not found. Ensure you're in the correct project directory."
+        log_error "pyproject.toml not found in current directory"
         exit 1
     fi
     
-    # Install dependencies excluding development packages for production efficiency
-    if ! poetry install --without dev --no-interaction; then
-        log_error "Failed to install dependencies. Check your pyproject.toml configuration."
+    # Follow README procedure: poetry lock, then poetry install
+    log_info "Running poetry lock..."
+    if ! poetry lock; then
+        log_error "Failed to lock dependencies"
+        exit 1
+    fi
+    
+    log_info "Running poetry install..."
+    if ! poetry install --no-interaction; then
+        log_error "Failed to install dependencies"
         echo ""
         echo "🔧 Troubleshooting steps:"
-        echo "   1. Verify pyproject.toml syntax"
-        echo "   2. Check network connectivity"
-        echo "   3. Try: poetry lock --no-update"
-        echo "   4. Try: poetry install --verbose"
+        echo "   1. Check network connectivity"
+        echo "   2. Try: poetry install --verbose"
         exit 1
     fi
     
     log_success "Dependencies installed successfully"
 }
 
-# Comprehensive OpenFabric SDK verification with detailed error reporting
+# Verify OpenFabric SDK installation
 verify_openfabric_installation() {
     log_info "Verifying openfabric-pysdk installation..."
     
-    # Test import with detailed error handling
     if ! poetry run python3 -c "
 import sys
 try:
     import openfabric_pysdk
     print('✅ openfabric-pysdk imported successfully')
-    print(f'📦 Version: {getattr(openfabric_pysdk, \"__version__\", \"unknown\")}')
 except ImportError as e:
     print(f'❌ Import failed: {e}', file=sys.stderr)
-    sys.exit(1)
-except Exception as e:
-    print(f'❌ Unexpected error: {e}', file=sys.stderr)
     sys.exit(1)
 " 2>/dev/null; then
         log_error "Failed to import openfabric-pysdk"
         echo ""
-        echo "🔧 Troubleshooting steps:"
-        echo "   1. Verify openfabric-pysdk is in pyproject.toml dependencies"
-        echo "   2. Try: poetry add openfabric-pysdk"
-        echo "   3. Check for version conflicts: poetry show --tree"
-        echo "   4. Try: poetry install --verbose"
+        echo "🔧 Try: poetry add openfabric-pysdk"
         exit 1
     fi
 }
 
-# Enhanced environment variable loading with validation and security
+# Verify GUI files exist
+verify_gui_files() {
+    log_info "Verifying GUI files..."
+    
+    local gui_files=("chainlit_gui.py" "gradio_gui.py")
+    for file in "${gui_files[@]}"; do
+        if [[ ! -f "$file" ]]; then
+            log_error "GUI file not found: $file"
+            exit 1
+        fi
+    done
+    
+    log_success "All GUI files found"
+}
+
+# Check if required ports are available
+check_ports() {
+    log_info "Checking port availability..."
+    
+    local ports=(${API_PORT} ${GUI_PORT})
+    for port in "${ports[@]}"; do
+        if command -v lsof &> /dev/null && lsof -i ":$port" &> /dev/null; then
+            log_warning "Port $port is already in use"
+            echo "   To free port $port, run: sudo fuser -k ${port}/tcp"
+        else
+            log_success "Port $port is available"
+        fi
+    done
+}
+
+# Load environment variables if .env exists
 load_environment_variables() {
     if [[ -f ".env" ]]; then
         log_info "Loading environment variables from .env file..."
-        
-        # Validate .env file format and load safely
-        if grep -q "^[A-Za-z_][A-Za-z0-9_]*=" .env 2>/dev/null; then
-            # Use a safer method to load environment variables
-            set -a  # Mark variables for export
-            # shellcheck source=/dev/null
-            source .env 2>/dev/null || {
-                log_warning "Some environment variables failed to load"
-            }
-            set +a  # Unmark variables for export
-            log_success "Environment variables loaded"
-        else
-            log_warning ".env file exists but appears to be empty or malformed"
-        fi
+        set -a
+        source .env 2>/dev/null || log_warning "Some environment variables failed to load"
+        set +a
+        log_success "Environment variables loaded"
     else
         log_info "No .env file found (optional)"
     fi
 }
 
-# Pre-flight checks to ensure application readiness
+# Pre-flight checks
 perform_preflight_checks() {
     log_info "Performing pre-flight checks..."
     
-    # Check if main application file exists
     if [[ ! -f "${APPLICATION_ENTRY}" ]]; then
         log_error "Application entry point '${APPLICATION_ENTRY}' not found"
         exit 1
     fi
     
-    # Check if port is available (optional check)
-    if command -v lsof &> /dev/null; then
-        if lsof -i ":${APPLICATION_PORT}" &> /dev/null; then
-            log_warning "Port ${APPLICATION_PORT} appears to be in use"
-            echo "   The application may fail to start or use a different port"
-        fi
-    fi
-    
     log_success "Pre-flight checks completed"
 }
 
-# Enhanced application startup with comprehensive information display
+# Enhanced application startup with GUI selection
 start_application() {
     echo ""
-    echo "🎯 Starting application..."
-    echo "🌐 Server will be available at: http://localhost:${APPLICATION_PORT}"
-    echo "📊 Swagger UI: http://localhost:${APPLICATION_PORT}/swagger-ui/#/"
+    echo "🎯 Starting AI 3D Generator application..."
+    echo "🌐 API Server: http://localhost:${API_PORT}"
+    echo "📊 Swagger UI: http://localhost:${API_PORT}/swagger-ui/#/"
+    
+    # Determine GUI mode and set appropriate port/URL
+    GUI_MODE=${GUI_MODE:-chainlit}
+    
+    if [ "$GUI_MODE" = "gradio" ]; then
+        echo "🎛️ Gradio GUI: http://localhost:${GUI_PORT}"
+    else
+        echo "🧠 Chainlit GUI: http://localhost:${GUI_PORT}"
+    fi
+    
     echo "📁 Output directory: $(pwd)/outputs"
     echo "📝 Log directory: $(pwd)/logs"
     echo "🧠 Memory database: $(pwd)/memory"
@@ -216,25 +330,40 @@ start_application() {
     echo "   - Monitor application logs in the logs/ directory"
     echo "   - Generated files will be saved in outputs/ directory"
     echo "   - Memory system stores all generations for recall"
+    if [ "$GUI_MODE" = "gradio" ]; then
+        echo "   - Using Gradio visual interface with memory capabilities"
+    else
+        echo "   - Using Chainlit conversational interface with memory"
+    fi
     echo ""
     echo "Press Ctrl+C to stop the application"
     echo "========================================"
     echo ""
     
     # Set up signal handling for graceful shutdown
-    trap 'echo ""; log_info "Shutting down application..."; exit 0' INT TERM
+    trap 'echo ""; log_info "Shutting down all processes..."; kill $API_PID $GUI_PID 2>/dev/null; exit 0' INT TERM
     
-    # Start the application with error handling
-    if ! poetry run python3 "${APPLICATION_ENTRY}"; then
-        log_error "Application failed to start or crashed"
-        echo ""
-        echo "🔧 Troubleshooting:"
-        echo "   - Check logs/ directory for error details"
-        echo "   - Verify all dependencies are installed"
-        echo "   - Ensure port ${APPLICATION_PORT} is available"
-        echo "   - Try running: poetry run python3 ${APPLICATION_ENTRY} --debug"
-        exit 1
+    # Start the API server (ignite.py)
+    log_info "Starting core engine (ignite.py) on port ${API_PORT}..."
+    poetry run python3 "${APPLICATION_ENTRY}" &
+    API_PID=$!
+    
+    # Give API server time to start
+    sleep 15
+    
+    # Start the selected GUI
+    if [ "$GUI_MODE" = "gradio" ]; then
+        log_info "Launching Gradio GUI on port ${GUI_PORT}..."
+        poetry run python3 gradio_gui.py &
+        GUI_PID=$!
+    else
+        log_info "Launching Chainlit GUI on port ${GUI_PORT}..."
+        poetry run chainlit run chainlit_gui.py -w --port ${GUI_PORT} &
+        GUI_PID=$!
     fi
+    
+    # Wait for both processes
+    wait $API_PID $GUI_PID
 }
 
 # Graceful shutdown handler
@@ -251,16 +380,24 @@ main() {
     trap 'log_error "Script failed at line $LINENO. Exit code: $?"' ERR
     trap cleanup_and_exit EXIT
     
+    # Parse command line arguments first
+    parse_arguments "$@"
+    
     # Execute startup sequence
     print_startup_banner
+    check_directory
+    check_virtual_environment
     check_poetry_installation
     validate_python_version
     install_dependencies
     verify_openfabric_installation
+    verify_gui_files
     load_environment_variables
+    check_ports
     perform_preflight_checks
+    select_gui_mode
     start_application
 }
 
-# Execute main function
+# Execute main function with all arguments
 main "$@"
